@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agente IA Local</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <div id="app">
+    <header>
+      <div id="status-dot"></div>
+      <span id="status-text">Conectando...</span>
+      <h1>Agente IA Local</h1>
+      <span id="model-badge">llama3.1:8b</span>
+    </header>
+
+    <div id="history-panel">
+      <div id="history-header">
+        <span>Histórico</span>
+        <button id="history-toggle">▼</button>
+      </div>
+      <div id="history-list"></div>
+    </div>
+
+    <div id="progress-bar-wrap" class="hidden">
+      <div id="progress-bar-inner"></div>
+      <span id="progress-label"></span>
+    </div>
+
+    <main id="log"></main>
+
+    <footer>
+      <div id="input-area">
+        <textarea
+          id="task-input"
+          placeholder="Digite uma tarefa para o agente executar..."
+          rows="2"
+        ></textarea>
+        <button id="send-btn" disabled>Enviar</button>
+      </div>
+    </footer>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

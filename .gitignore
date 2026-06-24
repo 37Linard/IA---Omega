@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Agente
+agent_memory.json
+workspace/
+teste.txt
+
+# OS
+.DS_Store
+Thumbs.db
