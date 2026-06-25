@@ -1,5 +1,20 @@
+import ipaddress
+import socket
 import requests
 import json
+
+
+def _is_private(url: str) -> bool:
+    """Bloqueia requests para localhost e redes privadas (SSRF)."""
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(url).hostname
+        if not host:
+            return True
+        ip = ipaddress.ip_address(socket.gethostbyname(host))
+        return ip.is_private or ip.is_loopback or ip.is_link_local
+    except Exception:
+        return False
 
 
 class HttpRequestTool:
@@ -20,6 +35,9 @@ class HttpRequestTool:
 
         if not url.startswith("http"):
             return "Erro: URL deve começar com http:// ou https://"
+
+        if _is_private(url):
+            return "Bloqueado: requests para redes privadas/localhost não são permitidos."
 
         try:
             if method == "GET":

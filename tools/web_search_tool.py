@@ -3,6 +3,8 @@ try:
 except ImportError:
     from duckduckgo_search import DDGS
 
+MAX_BODY = 300
+
 
 class WebSearchTool:
     name = "web_search"
@@ -15,7 +17,7 @@ class WebSearchTool:
             return "Erro: campo 'query' obrigatório."
 
         try:
-            with DDGS() as ddgs:
+            with DDGS(timeout=15) as ddgs:
                 results = list(ddgs.text(query, max_results=4))
 
             if not results:
@@ -23,9 +25,12 @@ class WebSearchTool:
 
             output = []
             for i, r in enumerate(results, 1):
+                body = r['body']
+                if len(body) > MAX_BODY:
+                    body = body[:MAX_BODY] + "..."
                 output.append(f"[{i}] {r['title']}")
                 output.append(f"    URL: {r['href']}")
-                output.append(f"    {r['body']}")
+                output.append(f"    {body}")
                 output.append("")
 
             return "\n".join(output)

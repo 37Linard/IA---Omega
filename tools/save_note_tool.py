@@ -2,7 +2,8 @@ import os
 import re
 from datetime import datetime
 
-OBSIDIAN_DIR = r"C:\Users\User\Documents\Obsidian Vault\Gabriel\Agente IA"
+from config import OBSIDIAN_BASE
+OBSIDIAN_DIR = os.path.join(OBSIDIAN_BASE, "Agente IA")
 
 
 class SaveNoteTool:

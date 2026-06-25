@@ -1,4 +1,10 @@
 import os
+from config import ALLOWED_READ_DIRS
+
+
+def _is_allowed(path: str) -> bool:
+    real = os.path.realpath(path)
+    return any(real.startswith(os.path.realpath(d)) for d in ALLOWED_READ_DIRS)
 
 
 class ListDirectoryTool:
@@ -13,6 +19,9 @@ class ListDirectoryTool:
 
         if not path:
             return "Erro: campo 'path' obrigatório."
+
+        if not _is_allowed(path):
+            return f"Bloqueado: '{path}' fora das pastas permitidas (Desktop, Documents, Downloads, workspace)."
 
         if not os.path.exists(path):
             return f"Erro: caminho não encontrado: '{path}'"

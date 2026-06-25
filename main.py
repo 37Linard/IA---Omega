@@ -10,7 +10,7 @@ from tools.http_request_tool import HttpRequestTool
 
 
 def main():
-    llm = OllamaLLM(model="llama3.1:8b")
+    llm = OllamaLLM(model="qwen2.5:7b")
 
     tools = [
         EchoTool(),
@@ -25,7 +25,7 @@ def main():
     agent = ReActAgent(llm=llm, tools=tools)
 
     print("=== AGENTE IA LOCAL ===")
-    print("Modelo: llama3.1:8b | Ferramentas:", [t.name for t in tools])
+    print("Modelo: qwen2.5:7b | Ferramentas:", [t.name for t in tools])
     print("Digite 'sair' para encerrar.\n")
 
     while True:
