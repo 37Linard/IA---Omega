@@ -20,6 +20,7 @@
       <h1>Agente IA Local</h1>
       <select id="model-select" title="Trocar modelo"></select>
       <span id="token-badge" class="hidden"></span>
+      <button id="profile-btn" title="Perfil do usuário">👤</button>
       <button id="health-btn" title="Dashboard de saúde">❤️</button>
       <button id="logs-btn"   title="Logs do servidor">🖥</button>
       <button id="clear-btn"  title="Limpar log">⌫</button>
@@ -51,6 +52,35 @@
       <div id="health-panel">
         <div class="overlay-header">❤️ Saúde do Sistema <button id="health-close">✕</button></div>
         <div id="health-content">Carregando...</div>
+      </div>
+    </div>
+
+    <!-- Profile panel -->
+    <div id="profile-overlay" class="overlay hidden">
+      <div id="profile-panel">
+        <div class="overlay-header">👤 Perfil do Usuário <button id="profile-close">✕</button></div>
+        <div id="profile-content">
+          <label>Nome<input id="prof-name" type="text" placeholder="Seu nome (opcional)" /></label>
+          <label>Nível técnico
+            <select id="prof-level">
+              <option value="iniciante">Iniciante</option>
+              <option value="intermediário" selected>Intermediário</option>
+              <option value="avançado">Avançado</option>
+              <option value="especialista">Especialista</option>
+            </select>
+          </label>
+          <label>Tom de resposta
+            <select id="prof-tone">
+              <option value="informal">Informal</option>
+              <option value="neutro" selected>Neutro</option>
+              <option value="formal">Formal</option>
+              <option value="técnico">Técnico</option>
+            </select>
+          </label>
+          <button id="prof-save">Salvar Perfil</button>
+          <span id="prof-status"></span>
+          <p class="prof-hint">A IA adapta automaticamente linguagem e profundidade ao seu perfil.</p>
+        </div>
       </div>
     </div>
 

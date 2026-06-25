@@ -11,49 +11,95 @@ log = logging.getLogger(__name__)
 SPECIALISTS = {
     "pesquisador": {
         "label": "Pesquisador",
-        "tools": ["web_search", "fetch_page", "http_request", "get_currency"],
-        "hint":  "pesquisa, notícia, URL, API, cotação, câmbio, moeda, dólar, euro",
+        "tools": ["web_search", "fetch_page", "http_request", "get_currency", "rag_search"],
+        "hint":  "pesquisa, notícia, URL, API, cotação, câmbio, moeda, dólar, euro, verificar fatos",
     },
     "arquivos": {
         "label": "Gerenciador de Arquivos",
-        "tools": ["read_file", "write_file", "list_directory", "save_note", "rag_search"],
-        "hint":  "ler arquivo, criar arquivo, salvar, listar pasta, nota, PDF, documento, contrato, relatório",
+        "tools": ["read_file", "write_file", "list_directory", "save_note", "rag_search", "read_spreadsheet"],
+        "hint":  "ler arquivo, criar arquivo, salvar, listar pasta, nota, PDF, documento, contrato, relatório, planilha, Excel, CSV",
     },
     "codigo": {
         "label": "Programador",
-        "tools": ["run_python", "run_sql", "terminal", "git"],
-        "hint":  "python, código, calcular, SQL, banco de dados, terminal, shell, git",
+        "tools": ["run_python", "run_sql", "terminal", "git", "read_file", "write_file", "generate_chart"],
+        "hint":  "python, código, calcular, SQL, banco de dados, terminal, shell, git, programar, refatorar, bug, algoritmo, gráfico",
     },
     "computador": {
         "label": "Controlador do Computador",
         "tools": ["screenshot", "keyboard", "mouse", "clipboard", "browser"],
-        "hint":  "screenshot, print, teclado, mouse, clicar, copiar, colar, browser, Chrome",
+        "hint":  "screenshot, print, teclado, mouse, clicar, copiar, colar, browser, Chrome, automação",
     },
     "comunicacao": {
         "label": "Comunicação",
-        "tools": ["send_email", "remember_fact"],
-        "hint":  "email, memorizar, lembrar, guardar fato, preferência",
+        "tools": ["send_email", "remember_fact", "notion", "slack"],
+        "hint":  "email, memorizar, lembrar, guardar fato, preferência, Notion, Slack, mensagem",
     },
     "visao": {
         "label": "Visão",
         "tools": ["analyze_image", "screenshot"],
-        "hint":  "analisar imagem, foto, PNG, JPG, ver imagem, descrever imagem, ler texto em imagem",
+        "hint":  "analisar imagem, foto, PNG, JPG, ver imagem, descrever imagem, ler texto em imagem, diagrama",
+    },
+    "professor": {
+        "label": "Professor",
+        "tools": ["web_search", "fetch_page", "run_python", "write_file", "save_note", "remember_fact", "read_file"],
+        "hint":  "aprender, ensinar, explicar, exercício, plano de estudo, tutorial, como funciona, o que é, me ensine, me explique, dúvida, estudo, curso, aula",
+    },
+    "dados": {
+        "label": "Analista de Dados",
+        "tools": ["read_spreadsheet", "run_python", "run_sql", "generate_chart", "read_file", "write_file", "rag_search"],
+        "hint":  "analisar dados, planilha, gráfico, estatística, CSV, Excel, visualização, dashboard, relatório de dados",
     },
     "geral": {
         "label": "Agente Geral",
-        "tools": [],  # vazio = todas as tools
+        "tools": [],
         "hint":  "múltiplas áreas, tarefa complexa, não se encaixa nas outras",
     },
 }
 
 SPECIALIST_PROMPTS = {
-    "pesquisador": "Você é especialista em pesquisa de informações. Priorize web_search e fetch_page.",
-    "arquivos":    "Você é especialista em manipulação de arquivos. Priorize read_file e write_file.",
-    "codigo":      "Você é especialista em execução de código. Priorize run_python e run_sql.",
-    "computador":  "Você é especialista em automação de interface. Priorize screenshot e browser.",
-    "comunicacao": "Você é especialista em comunicação e memória. Use send_email e remember_fact.",
-    "visao":       "Você é especialista em análise de imagens. Use analyze_image.",
-    "geral":       "",
+    "pesquisador": (
+        "Você é especialista em pesquisa. Busque informações atualizadas, cite fontes, "
+        "compare múltiplas perspectivas e verifique fatos. Priorize web_search e fetch_page."
+    ),
+    "arquivos": (
+        "Você é especialista em gestão de arquivos e documentos. "
+        "Leia, crie e organize arquivos com eficiência. Priorize read_file e write_file."
+    ),
+    "codigo": (
+        "Você é especialista em programação. Gere código limpo, explique soluções, "
+        "detecte bugs, sugira melhorias e suporte múltiplas linguagens. "
+        "Priorize run_python e run_sql. Para visualizações, use generate_chart."
+    ),
+    "computador": (
+        "Você é especialista em automação de interface. "
+        "Controle o computador com precisão. Priorize screenshot e browser."
+    ),
+    "comunicacao": (
+        "Você é especialista em comunicação e integração. "
+        "Gerencie emails, memorize preferências e integre com Notion e Slack."
+    ),
+    "visao": (
+        "Você é especialista em análise visual. "
+        "Analise imagens, diagramas, gráficos e screenshots. Use analyze_image."
+    ),
+    "professor": (
+        "Você é um professor especializado e tutor adaptativo. "
+        "MODO PROFESSOR ATIVO:\n"
+        "- Ensine passo a passo com exemplos práticos\n"
+        "- Crie exercícios relevantes\n"
+        "- Adapte a explicação ao nível do aluno (veja perfil do usuário)\n"
+        "- Identifique dificuldades e ajuste abordagem\n"
+        "- Gere planos de estudo estruturados quando solicitado\n"
+        "- Use analogias para conceitos abstratos\n"
+        "- Confirme compreensão antes de avançar\n"
+        "Ao final de explicações, sugira o próximo passo de aprendizado."
+    ),
+    "dados": (
+        "Você é especialista em análise de dados. "
+        "Leia planilhas, execute análises estatísticas, gere visualizações e "
+        "apresente insights de forma clara. Priorize read_spreadsheet e generate_chart."
+    ),
+    "geral": "",
 }
 
 MAX_PARALLEL = 3  # max especialistas simultâneos

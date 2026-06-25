@@ -9,8 +9,10 @@ OLLAMA_URL     = "http://localhost:11434"
 OBSIDIAN_BASE  = r"C:\Users\User\Documents\Obsidian Vault\Gabriel"
 
 # Agente
-MAX_STEPS      = 15
-NUM_PREDICT    = 1500
+MAX_STEPS      = 10
+NUM_PREDICT    = 600   # era 1500 — tokens suficientes, muito mais rápido
+NUM_CTX        = 4096  # contexto explícito — menos VRAM, mais velocidade
+NUM_GPU        = -1    # -1 = todas as camadas na GPU (auto)
 TEMPERATURE    = 0.1
 TOOL_TIMEOUT   = 30   # segundos máximos por execução de ferramenta
 MAX_TOOL_CALLS = 25   # máximo de chamadas de ferramentas por tarefa
@@ -44,3 +46,14 @@ ALLOWED_READ_DIRS = [
     r"C:\Users\User\Downloads",
     r"C:\Users\User\Desktop\MEU\IA\workspace",
 ]
+
+# Notion (opcional) — preencha para ativar notion_tool
+# Como obter: notion.so/my-integrations → criar integração → copiar "Internal Integration Token"
+NOTION_TOKEN       = ""
+NOTION_DATABASE_ID = ""  # ID do banco de dados onde criar páginas
+
+# Slack (opcional) — preencha WEBHOOK_URL OU BOT_TOKEN
+# Webhook: api.slack.com → Your App → Incoming Webhooks
+# Bot token: api.slack.com → Your App → OAuth & Permissions → Bot User OAuth Token
+SLACK_WEBHOOK_URL = ""
+SLACK_BOT_TOKEN   = ""

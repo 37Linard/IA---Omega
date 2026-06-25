@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Depends, H
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
+from fastapi.middleware.cors import CORSMiddleware
 import voice
 
 import logging
@@ -49,7 +50,15 @@ from llm import OllamaLLM
 from orchestrator import OrchestratorAgent
 from tool_loader import load_tools
 
-app       = FastAPI()
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 _security = HTTPBasic(auto_error=False)
 
 def check_auth(credentials: HTTPBasicCredentials = Depends(_security)):
@@ -61,6 +70,13 @@ def check_auth(credentials: HTTPBasicCredentials = Depends(_security)):
         raise HTTPException(status_code=401, headers={"WWW-Authenticate": "Basic"})
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Serve Next.js static assets (built via `npm run build`)
+from pathlib import Path as _Path
+_frontend_out = _Path(__file__).parent / "frontend" / "out"
+_next_dir = _frontend_out / "_next"
+if _next_dir.exists():
+    app.mount("/_next", StaticFiles(directory=str(_next_dir)), name="nextjs_static")
 
 llm      = OllamaLLM(model=OLLAMA_MODEL)
 executor = ThreadPoolExecutor(max_workers=4)
@@ -86,6 +102,9 @@ async def login(body: dict):
 
 @app.get("/")
 async def root():
+    idx = _frontend_out / "index.html"
+    if idx.exists():
+        return FileResponse(str(idx))
     return FileResponse("static/index.html")
 
 
@@ -218,6 +237,23 @@ async def get_history(credentials: HTTPBasicCredentials = Depends(check_auth)):
     return {"sessions": m.data.get("sessions", [])}
 
 
+@app.get("/profile")
+async def get_profile():
+    from user_profile import UserProfile
+    return UserProfile().to_dict()
+
+
+@app.post("/profile")
+async def update_profile(body: dict, _rl=Depends(_check_rate_limit)):
+    from user_profile import UserProfile
+    p = UserProfile()
+    allowed = {"name", "tech_level", "tone", "language"}
+    updates = {k: v for k, v in body.items() if k in allowed and isinstance(v, str)}
+    if updates:
+        p.update(**updates)
+    return p.to_dict()
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -313,3 +349,14 @@ async def websocket_endpoint(websocket: WebSocket):
 
     except WebSocketDisconnect:
         agent.cancel()
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def serve_spa(full_path: str):
+    target = _frontend_out / full_path
+    if target.is_file():
+        return FileResponse(str(target))
+    idx = _frontend_out / "index.html"
+    if idx.exists():
+        return FileResponse(str(idx))
+    raise HTTPException(status_code=404, detail="Not found")
