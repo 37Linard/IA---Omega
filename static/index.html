@@ -4,6 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Agente IA Local</title>
+  <meta name="theme-color" content="#4a9eff" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Agente IA" />
+  <link rel="manifest" href="/static/manifest.json" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
@@ -13,23 +18,49 @@
       <div id="status-dot"></div>
       <span id="status-text">Conectando...</span>
       <h1>Agente IA Local</h1>
-      <span id="model-badge">llama3.1:8b</span>
+      <select id="model-select" title="Trocar modelo"></select>
+      <span id="token-badge" class="hidden"></span>
+      <button id="health-btn" title="Dashboard de saúde">❤️</button>
+      <button id="logs-btn"   title="Logs do servidor">🖥</button>
+      <button id="clear-btn"  title="Limpar log">⌫</button>
+      <button id="theme-btn"  title="Alternar tema">☀️</button>
     </header>
+
+    <!-- Barra de abas -->
+    <div id="tabs-bar"></div>
 
     <div id="history-panel">
       <div id="history-header">
         <span>Histórico</span>
+        <input id="history-search" placeholder="buscar..." autocomplete="off" />
         <button id="history-toggle">▼</button>
       </div>
       <div id="history-list"></div>
     </div>
+
+    <!-- Painel de agentes colaborativos -->
+    <div id="agents-panel" class="hidden"></div>
 
     <div id="progress-bar-wrap" class="hidden">
       <div id="progress-bar-inner"></div>
       <span id="progress-label"></span>
     </div>
 
-    <main id="log"></main>
+    <!-- Health overlay -->
+    <div id="health-overlay" class="overlay hidden">
+      <div id="health-panel">
+        <div class="overlay-header">❤️ Saúde do Sistema <button id="health-close">✕</button></div>
+        <div id="health-content">Carregando...</div>
+      </div>
+    </div>
+
+    <!-- Logs panel -->
+    <div id="logs-panel" class="hidden">
+      <div class="overlay-header">🖥 Logs do Servidor <button id="logs-close">✕</button></div>
+      <div id="logs-content"></div>
+    </div>
+
+    <div id="log-container"></div>
 
     <footer>
       <div id="input-area">
@@ -38,11 +69,18 @@
           placeholder="Digite uma tarefa para o agente executar..."
           rows="2"
         ></textarea>
+        <button id="mic-btn" title="Gravar voz">🎙</button>
+        <div id="templates-wrap">
+          <button id="templates-btn" title="Templates">📋</button>
+          <div id="templates-menu" class="hidden"></div>
+        </div>
         <button id="send-btn" disabled>Enviar</button>
+        <button id="cancel-btn" class="hidden">Cancelar</button>
       </div>
     </footer>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

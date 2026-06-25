@@ -1,0 +1,16 @@
+requests
+ddgs
+fastapi
+uvicorn[standard]
+beautifulsoup4
+python-multipart
+chromadb
+pypdf
+watchdog
+pyjwt
+faster-whisper
+pyttsx3
+pyautogui
+Pillow
+pyperclip
+playwright

@@ -19,6 +19,9 @@ class WriteFileTool:
         if not filename:
             return "Erro: campo 'filename' obrigatório."
 
+        if "." not in filename:
+            return f"Erro: '{filename}' não tem extensão. Use ex: 'resultado.txt', 'dados.json'."
+
         # Força escrita apenas no workspace seguro
         os.makedirs(SAFE_DIR, exist_ok=True)
         safe_path = os.path.join(SAFE_DIR, os.path.basename(filename))

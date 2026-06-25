@@ -1,13 +1,25 @@
 import re
 import json
+import logging
+import os
+import threading
+import concurrent.futures
 from datetime import datetime
+import time
+from config import TOOL_TIMEOUT, MAX_TOOL_CALLS
+import audit
 from memory import Memory
+
+ERROR_LOG = os.path.join(os.path.dirname(__file__), "workspace", "error_log.json")
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """Você é um agente autônomo e geral. Resolve qualquer tarefa passo a passo usando ferramentas.
 
 CONTEXTO DO SISTEMA — use direto, sem pesquisar:
 Data e hora atual: {current_datetime}
-Se a tarefa for sobre data/hora, responda imediatamente com Final Answer.
+REGRA: Se a tarefa for sobre data/hora/dia, NÃO use ferramentas. Responda DIRETO com Final Answer usando o valor acima.
 
 FORMATO OBRIGATÓRIO — siga exatamente:
 
@@ -23,7 +35,7 @@ Thought: [próximo raciocínio]
 Quando terminar:
 
 Thought: Tenho informação suficiente para responder.
-Final Answer: [resposta completa e detalhada]
+Final Answer: [resposta completa — use APENAS dados das Observations. NUNCA cite fonte (Wise, Google, etc.) que não apareceu em uma Observation]
 
 {memory_context}
 
@@ -57,8 +69,14 @@ Thought: Vou calcular isso com Python.
 Action: run_python
 Action Input: {{"code": "print(sum(range(1, 101)))"}}
 
+Exemplo 5 — query SQL:
+Thought: Vou criar uma tabela e inserir dados.
+Action: run_sql
+Action Input: {{"db": "dados.db", "query": "CREATE TABLE IF NOT EXISTS pessoas (id INTEGER PRIMARY KEY, nome TEXT, idade INTEGER)"}}
+
 MAPEAMENTO DE TAREFAS → FERRAMENTAS:
 - cotação/dólar/euro/moeda/câmbio → get_currency
+
 - pesquisa/notícia/informação geral → web_search
 - acessar URL / extrair conteúdo de página → fetch_page
 - salvar nota no Obsidian → save_note
@@ -67,21 +85,61 @@ MAPEAMENTO DE TAREFAS → FERRAMENTAS:
 - listar pasta → list_directory
 - chamar API → http_request
 - calcular/executar código → run_python
+- banco de dados/SQL/tabela/query/sqlite → run_sql
+- memorizar/lembrar/guardar fato/preferência → remember_fact
+- tirar/capturar screenshot/print da tela → screenshot
+- digitar texto/pressionar teclas no computador → keyboard
+- mover/clicar mouse → mouse
+- clipboard/área de transferência/copiar/colar → clipboard
+- git status/log/diff/commit em repositório → git
+- executar comando no terminal/shell → terminal
+- abrir/navegar/clicar em browser/Chrome → browser
+- enviar email → send_email
 
 REGRAS CRÍTICAS:
 - Action Input SEMPRE em JSON válido com chaves duplas
 - NUNCA invente observações — aguarde o sistema
 - NUNCA repita a mesma Action se já recebeu observação — use o resultado
 - Use Final Answer quando tiver a resposta, mesmo que incompleta
+- NUNCA cite fonte específica (Wise, Bloomberg, Google, etc.) que não acessou com fetch_page ou web_search — use apenas o que está na Observation
 """
 
 
 class ReActAgent:
-    def __init__(self, llm, tools: list):
-        self.llm     = llm
-        self.tools   = {t.name: t for t in tools}
-        self.scratchpad = []
-        self.memory  = Memory()
+    def __init__(self, llm, tools: list, specialist_context: str = ""):
+        self.llm                = llm
+        self.tools              = {t.name: t for t in tools} if isinstance(tools, list) else tools
+        self.scratchpad         = []
+        self.memory             = Memory()
+        self._cancel            = threading.Event()
+        self.conversation       = []  # [{task, result}, ...]
+        self.specialist_context = specialist_context
+
+    def _log_error(self, task: str, error_type: str, details: str):
+        try:
+            os.makedirs(os.path.dirname(ERROR_LOG), exist_ok=True)
+            try:
+                with open(ERROR_LOG, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = {"errors": []}
+            data["errors"].append({
+                "timestamp": datetime.now().isoformat(),
+                "task": task[:100],
+                "type": error_type,
+                "details": details[:300]
+            })
+            data["errors"] = data["errors"][-100:]
+            with open(ERROR_LOG, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+
+    def cancel(self):
+        self._cancel.set()
+
+    def reset_cancel(self):
+        self._cancel.clear()
 
     def _build_tools_description(self) -> str:
         return "\n".join(
@@ -89,15 +147,62 @@ class ReActAgent:
             for name, tool in self.tools.items()
         )
 
+    def _compress_scratchpad(self):
+        """Quando scratchpad fica longo, resume os passos antigos com LLM."""
+        if len(self.scratchpad) <= 12:
+            return
+        to_compress = self.scratchpad[:-5]
+        recent      = self.scratchpad[-5:]
+        prompt = (
+            "Resuma em 3-4 linhas os passos abaixo de um agente IA, "
+            "preservando ações executadas e resultados importantes:\n\n"
+            + "\n".join(str(s) for s in to_compress[:10])
+            + "\n\nResumo:"
+        )
+        try:
+            summary = self.llm.generate(prompt)
+            self.scratchpad = [f"[Resumo de passos anteriores: {summary}]"] + recent
+        except Exception:
+            self.scratchpad = recent  # fallback: descarta antigos se LLM falhar
+
+    def _build_conversation_context(self) -> str:
+        if not self.conversation:
+            return ""
+        lines = ["=== TAREFAS RECENTES ==="]
+        for item in self.conversation[-3:]:
+            lines.append(f"Tarefa: {item['task']}")
+            lines.append(f"Resultado: {item['result'][:250]}")
+            lines.append("")
+        lines.append("========================\n")
+        return "\n".join(lines)
+
     def _build_prompt(self, task: str) -> str:
         now = datetime.now().strftime("%d/%m/%Y %H:%M, %A")
         system = SYSTEM_PROMPT.format(
             tools_description=self._build_tools_description(),
-            memory_context=self.memory.get_context(),
+            memory_context=self.memory.get_context(task),
             current_datetime=now
         )
+        if self.specialist_context:
+            system = f"{self.specialist_context}\n\n{system}"
         history = "\n".join(self.scratchpad[-10:])
-        return f"{system}\n\nTask: {task}\n{history}"
+        conv    = self._build_conversation_context()
+        return f"{system}\n\n{conv}Task: {task}\n{history}"
+
+    def _find_json_block(self, text: str):
+        """Extrai primeiro bloco JSON balanceado (suporta aninhamento)."""
+        depth = 0
+        start = None
+        for i, c in enumerate(text):
+            if c == '{':
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif c == '}':
+                depth -= 1
+                if depth == 0 and start is not None:
+                    return text[start:i + 1]
+        return None
 
     def _extract_json(self, text: str):
         """Tenta extrair JSON de texto, mesmo com aspas simples ou quebras."""
@@ -116,14 +221,14 @@ class ReActAgent:
         except json.JSONDecodeError:
             pass
 
-        # Extrai primeiro bloco { ... }
-        match = re.search(r'\{[^{}]+\}', text, re.DOTALL)
-        if match:
+        # Extrai bloco { ... } balanceado (suporta JSON aninhado)
+        block = self._find_json_block(text)
+        if block:
             try:
-                return json.loads(match.group())
+                return json.loads(block)
             except json.JSONDecodeError:
                 try:
-                    return json.loads(match.group().replace("'", '"'))
+                    return json.loads(block.replace("'", '"'))
                 except json.JSONDecodeError:
                     pass
 
@@ -168,21 +273,37 @@ class ReActAgent:
 
     def _execute_tool(self, action: str, action_input) -> str:
         if action not in self.tools:
-            available = list(self.tools.keys())
-            return f"Ferramenta '{action}' não existe. Disponíveis: {available}"
-        try:
-            return str(self.tools[action].run(action_input))
-        except Exception as e:
-            return f"Erro ao executar {action}: {str(e)}"
+            return f"Ferramenta '{action}' não existe. Disponíveis: {list(self.tools.keys())}"
+        self._tool_calls += 1
+        if self._tool_calls > MAX_TOOL_CALLS:
+            return f"Bloqueado: limite de {MAX_TOOL_CALLS} chamadas de ferramentas atingido nesta tarefa."
+        t0 = time.monotonic()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            future = ex.submit(self.tools[action].run, action_input)
+            try:
+                result = str(future.result(timeout=TOOL_TIMEOUT))
+            except concurrent.futures.TimeoutError:
+                result = f"Erro: '{action}' excedeu {TOOL_TIMEOUT}s e foi cancelada."
+            except Exception as e:
+                result = f"Erro ao executar {action}: {str(e)}"
+        audit.log_action(action, action_input, result, duration=time.monotonic() - t0)
+        return result
 
     def _is_compound(self, task: str) -> bool:
-        keywords = [
-            " e salve", " e depois", " então salve", " em seguida",
-            " e escreva", " e crie", " e liste", " e execute",
-            " e pesquise", " depois salve", " depois escreva",
-        ]
+        # Fast-path: tarefa curta ou sem indicadores de sequência → não é composta
         t = task.lower()
-        return any(kw in t for kw in keywords)
+        seq_indicators = [" e ", " depois", " então", " em seguida", " salve", " crie", " escreva", " liste", " execute"]
+        if len(task) < 20 or not any(kw in t for kw in seq_indicators):
+            return False
+
+        prompt = (
+            'Responda APENAS "SIM" ou "NÃO":\n'
+            "A tarefa abaixo requer múltiplos passos sequenciais usando ferramentas diferentes?\n\n"
+            f"Tarefa: {task}\n"
+            "Resposta:"
+        )
+        response = self.llm.generate(prompt).strip().upper()
+        return "SIM" in response
 
     def _plan(self, task: str, emit) -> list:
         emit({"type": "step", "content": "Planejando subtarefas..."})
@@ -190,6 +311,10 @@ class ReActAgent:
             f"Decomponha a tarefa abaixo em passos simples e sequenciais.\n"
             f"Cada passo deve usar UMA ferramenta.\n"
             f"Ferramentas disponíveis: {list(self.tools.keys())}\n\n"
+            f"REGRAS DO PLANO:\n"
+            f"- Use o MÍNIMO de passos necessários\n"
+            f"- NUNCA use web_search e get_currency para a mesma cotação — get_currency já tem o dado\n"
+            f"- NUNCA repita ferramentas para a mesma informação\n\n"
             f"RETORNE APENAS uma lista numerada. Sem explicações.\n\n"
             f"Exemplo:\n"
             f"Tarefa: pesquise o preço do bitcoin e salve em bitcoin.txt\n"
@@ -197,7 +322,12 @@ class ReActAgent:
             f"2. Usar write_file para salvar resultado em bitcoin.txt\n\n"
             f"Tarefa: {task}\n"
         )
-        response = self.llm.generate(plan_prompt)
+        emit({"type": "token_start", "content": ""})
+        response = self.llm.generate(
+            plan_prompt,
+            on_token=lambda t: emit({"type": "token", "content": t})
+        )
+        emit({"type": "token_end", "content": ""})
         steps = []
         for line in response.split("\n"):
             line = line.strip()
@@ -224,6 +354,9 @@ class ReActAgent:
         last_successful_obs = None
 
         for _ in range(5):
+            if self._cancel.is_set():
+                return "Passo cancelado."
+
             prompt = self._build_prompt(context_str + step_task)
 
             emit({"type": "token_start", "content": ""})
@@ -276,11 +409,35 @@ class ReActAgent:
             return last_successful_obs
         return f"Passo {step_num} incompleto após 5 tentativas."
 
+    def _make_streaming_cb(self, emit):
+        """Callback stateful: roteia tokens para thought ou final box."""
+        buf = []
+        final_started = [False]
+
+        def on_token(token):
+            buf.append(token)
+            full = "".join(buf)
+            if not final_started[0]:
+                if "Final Answer:" in full:
+                    fa_idx     = full.index("Final Answer:")
+                    action_idx = full.find("Action:")
+                    if action_idx == -1 or action_idx > fa_idx:
+                        final_started[0] = True
+                        emit({"type": "final_stream_start", "content": ""})
+                        already = full[fa_idx + len("Final Answer:"):].lstrip("\n ")
+                        if already:
+                            emit({"type": "final_token", "content": already})
+                        return
+                emit({"type": "token", "content": token})
+            else:
+                emit({"type": "final_token", "content": token})
+
+        return on_token, final_started
+
     def run(self, task: str, max_steps: int = 15, step_callback=None) -> str:
-        self.scratchpad = []
-        print(f"\n{'#'*50}")
-        print(f"TAREFA: {task}")
-        print(f"{'#'*50}")
+        self.scratchpad  = []
+        self._tool_calls = 0
+        log.info("TAREFA: %s", task)
 
         def emit(data: dict):
             if step_callback:
@@ -292,9 +449,13 @@ class ReActAgent:
             steps = self._plan(task, emit)
             emit({"type": "thought", "content": f"Plano criado:\n" + "\n".join(f"{i+1}. {s}" for i, s in enumerate(steps))})
 
-            context = {}
+            context = {"tarefa_original": task}
             results = []
             for i, step in enumerate(steps):
+                if self._cancel.is_set():
+                    emit({"type": "error", "content": "Tarefa cancelada pelo usuário."})
+                    emit({"type": "done", "content": ""})
+                    return "Cancelado."
                 result = self._run_step(step, context, emit, i + 1, len(steps))
                 context[f"passo_{i+1}"] = result
                 results.append(result)
@@ -304,7 +465,9 @@ class ReActAgent:
             )
             emit({"type": "final", "content": final})
             emit({"type": "done", "content": ""})
-            self.memory.save_session(task, final[:200], [])
+            self.memory.save_session(task, final[:200], results)
+            self.conversation = self.conversation[-4:]
+            self.conversation.append({"task": task, "result": final[:250]})
             return final
 
         last_action_key = None
@@ -312,18 +475,28 @@ class ReActAgent:
         self.scratchpad = []
 
         for step in range(max_steps):
-            print(f"\n{'='*40} STEP {step + 1}/{max_steps} {'='*40}")
+            if self._cancel.is_set():
+                emit({"type": "error", "content": "Tarefa cancelada pelo usuário."})
+                emit({"type": "done", "content": ""})
+                return "Cancelado."
+
+            log.info("STEP %d/%d", step + 1, max_steps)
             emit({"type": "step", "content": f"Step {step + 1}/{max_steps}"})
 
+            self._compress_scratchpad()
             prompt = self._build_prompt(task)
 
-            # Streaming — envia tokens ao frontend em tempo real
+            # Streaming — roteia tokens: thought bubble ou final box
             emit({"type": "token_start", "content": ""})
-            response = self.llm.generate(
-                prompt,
-                on_token=lambda t: emit({"type": "token", "content": t}) if step_callback else None
-            )
-            emit({"type": "token_end", "content": ""})
+            if step_callback:
+                _cb, _fs = self._make_streaming_cb(emit)
+            else:
+                _cb, _fs = None, [False]
+            response = self.llm.generate(prompt, on_token=_cb)
+            if _fs[0]:
+                emit({"type": "final_stream_end", "content": ""})
+            else:
+                emit({"type": "token_end", "content": ""})
 
             # Remove observações inventadas pelo modelo
             clean_response = re.split(r'\n\s*Observa[cç][aã]o:', response)[0].strip()
@@ -335,7 +508,8 @@ class ReActAgent:
                 action, action_input = self._parse_response(clean_response)
             except ValueError as e:
                 err_msg = str(e)
-                print(f"\n[ERRO PARSER]: {err_msg}")
+                log.warning("PARSER: %s", err_msg)
+                self._log_error(task, "parser_error", err_msg)
                 emit({"type": "error", "content": f"Formato inválido: {err_msg}"})
                 tools_list = list(self.tools.keys())
                 correction = (
@@ -356,8 +530,7 @@ class ReActAgent:
                 if loop_count >= 2:
                     hint = (
                         f"Thought: Estou repetindo {action} com os mesmos parâmetros e não está funcionando. "
-                        f"Preciso tentar algo diferente. "
-                        f"Para cotação do dólar em reais, o parâmetro correto é currency='BRL', não 'USD'.\n"
+                        f"Preciso tentar abordagem diferente ou usar outra ferramenta.\n"
                     )
                     self.scratchpad.append(hint)
                     emit({"type": "error", "content": f"Loop detectado em {action}. Forçando correção."})
@@ -369,19 +542,23 @@ class ReActAgent:
             last_action_key = action_key
 
             if action == "Final Answer":
-                print(f"\n{'#'*50}\nRESPOSTA FINAL:\n{action_input}\n{'#'*50}")
-                emit({"type": "final", "content": action_input})
+                log.info("RESPOSTA FINAL: %s", action_input[:200])
+                if not _fs[0]:
+                    emit({"type": "final", "content": action_input})
                 self.memory.save_session(task, action_input[:200], self.scratchpad)
+                self.conversation = self.conversation[-4:]
+                self.conversation.append({"task": task, "result": action_input[:250]})
                 return action_input
 
-            print(f"\n[EXECUTANDO] {action}({action_input})")
+            log.info("EXECUTANDO: %s(%s)", action, action_input)
             emit({"type": "action", "content": f"{action}({json.dumps(action_input, ensure_ascii=False)})"})
 
             observation = self._execute_tool(action, action_input)
-            print(f"[RESULTADO] {observation[:300]}{'...' if len(observation) > 300 else ''}")
+            log.info("RESULTADO: %s", observation[:300])
             emit({"type": "observation", "content": observation})
 
             self.scratchpad.append(f"Observation: {observation}")
 
+        self._log_error(task, "max_steps", f"Atingiu {max_steps} steps sem Final Answer")
         emit({"type": "error", "content": "Limite de passos atingido."})
         return "Limite de passos atingido sem resposta final."

@@ -1,0 +1,13 @@
+services:
+  agent:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./workspace:/app/workspace
+    environment:
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - JWT_SECRET=${JWT_SECRET:-agente-ia-local-secret-change-me}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
