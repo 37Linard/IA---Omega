@@ -783,7 +783,52 @@ if ('serviceWorker' in navigator) {
 // ---- JWT: envia token no handshake do WS se existir ----
 function getToken() { return localStorage.getItem('jwt_token') || ''; }
 
+// ---- PERFIL DO USUÁRIO ----
+const profileBtn     = document.getElementById('profile-btn');
+const profileOverlay = document.getElementById('profile-overlay');
+const profileClose   = document.getElementById('profile-close');
+const profName       = document.getElementById('prof-name');
+const profLevel      = document.getElementById('prof-level');
+const profTone       = document.getElementById('prof-tone');
+const profSave       = document.getElementById('prof-save');
+const profStatus     = document.getElementById('prof-status');
+
+async function loadProfile() {
+  try {
+    const d = await (await fetch('/profile')).json();
+    if (d.name)       profName.value  = d.name;
+    if (d.tech_level) profLevel.value = d.tech_level;
+    if (d.tone)       profTone.value  = d.tone;
+  } catch {}
+}
+
+profileBtn.addEventListener('click', () => {
+  profileOverlay.classList.remove('hidden');
+  loadProfile();
+});
+profileClose.addEventListener('click', () => profileOverlay.classList.add('hidden'));
+profileOverlay.addEventListener('click', e => { if (e.target === profileOverlay) profileOverlay.classList.add('hidden'); });
+
+profSave.addEventListener('click', async () => {
+  try {
+    await fetch('/profile', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        name:       profName.value.trim(),
+        tech_level: profLevel.value,
+        tone:       profTone.value,
+      })
+    });
+    profStatus.textContent = '✓ Salvo';
+    setTimeout(() => { profStatus.textContent = ''; }, 2000);
+  } catch {
+    profStatus.textContent = '✗ Erro ao salvar';
+  }
+});
+
 // ---- INICIALIZAÇÃO ----
 createTab();
 loadHistory();
+loadProfile();
 loadModels();

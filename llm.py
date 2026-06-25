@@ -2,12 +2,12 @@ import json
 import logging
 import time
 import requests
-from config import OLLAMA_URL, NUM_PREDICT, TEMPERATURE, VISION_MODEL
+from config import OLLAMA_URL, NUM_PREDICT, NUM_CTX, NUM_GPU, TEMPERATURE, VISION_MODEL
 
 log = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
-RETRY_DELAY = 2  # segundos
+RETRY_DELAY = 5  # segundos — dá tempo pro Ollama carregar o modelo
 
 
 class OllamaLLM:
@@ -29,6 +29,8 @@ class OllamaLLM:
                 "temperature": TEMPERATURE,
                 "stop": ["Observation:"],
                 "num_predict": NUM_PREDICT,
+                "num_ctx": NUM_CTX,
+                "num_gpu": NUM_GPU,
             }
         }
 
@@ -87,7 +89,7 @@ class OllamaLLM:
             "prompt":  prompt,
             "images":  [image_b64],
             "stream":  False,
-            "options": {"temperature": TEMPERATURE, "num_predict": NUM_PREDICT},
+            "options": {"temperature": TEMPERATURE, "num_predict": NUM_PREDICT, "num_gpu": NUM_GPU},
         }
         for attempt in range(1, MAX_RETRIES + 1):
             try:
