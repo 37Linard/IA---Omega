@@ -1,5 +1,6 @@
 import asyncio
 import time
+import uuid
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor
 import secrets
@@ -82,10 +83,10 @@ llm      = OllamaLLM(model=OLLAMA_MODEL)
 executor = ThreadPoolExecutor(max_workers=4)
 
 
-def create_agent() -> OrchestratorAgent:
+def create_agent(session_id: str = "") -> OrchestratorAgent:
     """Cria orchestrator isolado por conexão WebSocket. Roteia para especialista automaticamente."""
     tools = load_tools()
-    return OrchestratorAgent(llm=llm, all_tools=tools)
+    return OrchestratorAgent(llm=llm, all_tools=tools, session_id=session_id)
 
 
 _scheduler.start(create_agent, SCHEDULED_TASKS)
@@ -162,6 +163,38 @@ async def set_model(body: dict):
     return {"model": llm.model}
 
 
+@app.get("/metrics")
+async def get_metrics():
+    import subprocess as _sp
+    from audit import tool_stats as _tool_stats
+
+    # VRAM via nvidia-smi
+    vram: dict = {}
+    try:
+        out = _sp.run(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total,memory.free", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+        parts = [x.strip() for x in out.split(",")]
+        used, total, free = int(parts[0]), int(parts[1]), int(parts[2])
+        vram = {"used_mb": used, "total_mb": total, "free_mb": free,
+                "pct": round(used / total * 100, 1) if total else 0}
+    except Exception:
+        pass
+
+    return {
+        "inference": {
+            "tps":               llm.session_tokens.get("tps", 0),
+            "ttft_ms":           llm.session_tokens.get("ttft_ms", 0),
+            "context_pct":       llm.session_tokens.get("context_pct", 0),
+            "prompt_tokens":     llm.session_tokens.get("prompt", 0),
+            "completion_tokens": llm.session_tokens.get("completion", 0),
+        },
+        "tools": _tool_stats(days=7),
+        "vram": vram,
+    }
+
+
 @app.get("/health")
 async def get_health():
     import subprocess, requests as req
@@ -177,15 +210,38 @@ async def get_health():
     try:
         out = subprocess.run([
             "nvidia-smi",
-            "--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total",
+            "--query-gpu=name,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw,power.limit",
             "--format=csv,noheader,nounits"
         ], capture_output=True, text=True, timeout=5).stdout.strip()
         p   = [x.strip() for x in out.split(",")]
         gpu = {"name": p[0], "temp": p[1], "util": p[2],
-               "vram_used": p[3], "vram_total": p[4]}
+               "vram_used": p[3], "vram_total": p[4],
+               "power_draw": p[5] if len(p) > 5 else "N/A",
+               "power_limit": p[6] if len(p) > 6 else "N/A"}
     except Exception:
         gpu = {}
     return {"ollama": ollama, "gpu": gpu}
+
+
+@app.get("/sandbox/status")
+async def sandbox_status():
+    from tools.run_python_tool import get_sandbox_status
+    return get_sandbox_status()
+
+
+@app.get("/workspace/img/{filename}")
+async def serve_workspace_image(filename: str):
+    import re
+    import os
+    if not re.match(r'^[\w\-]+\.(png|jpg|jpeg|webp|gif|bmp)$', filename):
+        raise HTTPException(status_code=400, detail="Nome invalido")
+    path = os.path.join(os.path.dirname(__file__), "workspace", filename)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Imagem nao encontrada")
+    ext  = filename.rsplit(".", 1)[-1].lower()
+    mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+            "webp": "image/webp", "gif": "image/gif", "bmp": "image/bmp"}.get(ext, "image/png")
+    return FileResponse(path, media_type=mime)
 
 
 @app.post("/upload")
@@ -193,7 +249,7 @@ async def upload_file(file: UploadFile = File(...), _rl=Depends(_check_rate_limi
     import os
     from rag import get_rag_index
     safe = os.path.basename(file.filename or "arquivo")
-    dest = os.path.join(r"C:\Users\User\Desktop\MEU\IA\workspace", safe)
+    dest = os.path.join(os.path.dirname(__file__), "workspace", safe)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     content = await file.read()
     with open(dest, "wb") as f:
@@ -216,6 +272,37 @@ async def rag_list_docs():
     return {"docs": get_rag_index().list_docs()}
 
 
+@app.post("/rag/index-folder")
+async def rag_index_folder(body: dict, _rl=Depends(_check_rate_limit)):
+    from rag import get_rag_index
+    folder    = body.get("path", "").strip()
+    recursive = bool(body.get("recursive", False))
+    if not folder:
+        raise HTTPException(status_code=400, detail="path obrigatório")
+    results = await asyncio.get_running_loop().run_in_executor(
+        executor, lambda: get_rag_index().index_folder(folder, recursive)
+    )
+    return {"results": results, "total": len(results)}
+
+
+@app.post("/rag/index-file")
+async def rag_index_file(body: dict, _rl=Depends(_check_rate_limit)):
+    from rag import get_rag_index
+    path = body.get("path", "").strip()
+    if not path:
+        raise HTTPException(status_code=400, detail="path obrigatório")
+    result = await asyncio.get_running_loop().run_in_executor(
+        executor, lambda: get_rag_index().index_file(path)
+    )
+    return result
+
+
+@app.delete("/rag/docs/{fname}")
+async def rag_delete_doc(fname: str):
+    from rag import get_rag_index
+    return get_rag_index().delete_doc(fname)
+
+
 @app.post("/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
     audio = await file.read()
@@ -228,6 +315,51 @@ async def speak_text(body: dict):
     text  = body.get("text", "")[:500]
     audio = await asyncio.get_running_loop().run_in_executor(executor, voice.speak, text)
     return Response(content=audio, media_type="audio/wav")
+
+
+@app.get("/specialist-models")
+async def get_specialist_models():
+    from orchestrator import list_specialist_models, SPECIALISTS
+    models_data = list_specialist_models()
+    return {
+        "specialists": [
+            {"key": k, "label": SPECIALISTS[k]["label"], "model": models_data[k]}
+            for k in SPECIALISTS
+        ]
+    }
+
+
+@app.post("/specialist-models")
+async def post_specialist_model(body: dict, _rl=Depends(_check_rate_limit)):
+    from orchestrator import SPECIALISTS, set_specialist_model
+    specialist = body.get("specialist", "").strip()
+    model      = body.get("model", "").strip()
+    if specialist not in SPECIALISTS:
+        raise HTTPException(status_code=400, detail=f"Especialista '{specialist}' desconhecido")
+    if not model:
+        raise HTTPException(status_code=400, detail="model obrigatório")
+    set_specialist_model(specialist, model)
+    return {"specialist": specialist, "model": model}
+
+
+@app.get("/kg/stats")
+async def kg_stats():
+    from knowledge_graph import KnowledgeGraph
+    return KnowledgeGraph().stats()
+
+
+@app.get("/kg/query")
+async def kg_query(topic: str = "", limit: int = 20):
+    from knowledge_graph import KnowledgeGraph
+    kg = KnowledgeGraph()
+    return {"topic": topic, "facts": kg.query(topic, max_results=min(limit, 50))}
+
+
+@app.get("/memory/short-term/{session_id}")
+async def memory_short_term(session_id: str):
+    from memory import Memory
+    m = Memory()
+    return {"messages": m.short_term.get_messages(session_id)}
 
 
 @app.get("/history")
@@ -270,7 +402,8 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.close(code=4001)
             return
 
-    agent = create_agent()
+    session_id = str(uuid.uuid4())
+    agent = create_agent(session_id)
     try:
         while True:
             data = await websocket.receive_json()
@@ -326,8 +459,16 @@ async def websocket_endpoint(websocket: WebSocket):
                 if ws_fut in finished:
                     try:
                         msg = ws_fut.result()
-                        if isinstance(msg, dict) and msg.get("type") == "cancel":
-                            agent.cancel()
+                        if isinstance(msg, dict):
+                            if msg.get("type") == "cancel":
+                                agent.cancel()
+                            elif msg.get("type") == "hitl_response":
+                                from agent import _HITL_REGISTRY
+                                hitl_id = msg.get("id", "")
+                                entry   = _HITL_REGISTRY.get(hitl_id)
+                                if entry:
+                                    entry["approved"] = bool(msg.get("approved", False))
+                                    entry["event"].set()
                     except Exception:
                         pass
                     ws_fut = None

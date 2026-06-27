@@ -85,6 +85,23 @@ export function useAgentWebSocket() {
               agent: data.agent,
             })
             break
+          case 'correction':
+            s.addStep(msgId, { type: 'correction', content: data.content })
+            break
+          case 'reflection':
+            s.addStep(msgId, {
+              type:     'reflection',
+              content:  data.content,
+              score:    data.score,
+              accepted: data.accepted,
+            })
+            break
+          case 'reset_content':
+            s.resetContent(msgId)
+            break
+          case 'hitl_request':
+            s.setHitlRequest({ id: data.id, action: data.action, input: data.input, message: data.message })
+            break
           case 'token_usage':
             s.setTokenUsage(msgId, data.prompt, data.completion)
             break
@@ -126,5 +143,10 @@ export function useAgentWebSocket() {
     currentMsgId.current = null
   }, [])
 
-  return { connect, sendTask, cancelTask, connected, running }
+  const respondHitl = useCallback((id: string, approved: boolean) => {
+    wsRef.current?.send(JSON.stringify({ type: 'hitl_response', id, approved }))
+    storeRef.current.setHitlRequest(null)
+  }, [])
+
+  return { connect, sendTask, cancelTask, respondHitl, connected, running }
 }

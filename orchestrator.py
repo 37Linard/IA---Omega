@@ -8,6 +8,34 @@ from memory import Memory
 
 log = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Runtime model overrides — sobrepõem config.py sem reiniciar o servidor
+# ---------------------------------------------------------------------------
+_runtime_models: dict[str, str] = {}
+
+
+def get_specialist_model(specialist: str) -> str:
+    from config import SPECIALIST_MODELS, OLLAMA_MODEL
+    return (
+        _runtime_models.get(specialist)
+        or SPECIALIST_MODELS.get(specialist, "")
+        or OLLAMA_MODEL
+    )
+
+
+def set_specialist_model(specialist: str, model: str) -> None:
+    _runtime_models[specialist] = model
+    log.info("SPECIALIST MODEL: %s → %s", specialist, model)
+
+
+def get_manager_model() -> str:
+    from config import MANAGER_MODEL, OLLAMA_MODEL
+    return MANAGER_MODEL or OLLAMA_MODEL
+
+
+def list_specialist_models() -> dict[str, str]:
+    return {name: get_specialist_model(name) for name in SPECIALISTS}
+
 SPECIALISTS = {
     "pesquisador": {
         "label": "Pesquisador",
@@ -106,13 +134,26 @@ MAX_PARALLEL = 3  # max especialistas simultâneos
 
 
 class OrchestratorAgent:
-    def __init__(self, llm, all_tools: list):
-        self.llm       = llm
-        self.all_tools = {t.name: t for t in all_tools} if isinstance(all_tools, list) else all_tools
-        self.memory    = Memory()
-        self._cancel   = threading.Event()
-        self._active   = []   # especialistas ativos (lista thread-safe via lock)
-        self._lock     = threading.Lock()
+    _llm_cache: dict[str, object] = {}  # model_name → OllamaLLM (shared across instances)
+
+    def __init__(self, llm, all_tools: list, session_id: str = ""):
+        self.llm        = llm
+        self.all_tools  = {t.name: t for t in all_tools} if isinstance(all_tools, list) else all_tools
+        self.memory     = Memory()
+        self.session_id = session_id
+        self._cancel    = threading.Event()
+        self._active    = []
+        self._lock      = threading.Lock()
+        # Registra o llm padrão no cache
+        OrchestratorAgent._llm_cache[llm.model] = llm
+
+    def _get_llm(self, model: str):
+        """Retorna OllamaLLM cacheado para o model. Cria se necessário."""
+        if model not in OrchestratorAgent._llm_cache:
+            from llm import OllamaLLM
+            OrchestratorAgent._llm_cache[model] = OllamaLLM(model=model)
+            log.info("LLM cache MISS — criando OllamaLLM(%s)", model)
+        return OrchestratorAgent._llm_cache[model]
 
     def cancel(self):
         self._cancel.set()
@@ -137,10 +178,11 @@ class OrchestratorAgent:
             f"Responda APENAS com o nome exato da categoria "
             f"(pesquisador/arquivos/codigo/computador/comunicacao/visao/geral):"
         )
-        result = self.llm.generate(prompt).strip().lower()
+        manager_llm = self._get_llm(get_manager_model())
+        result = manager_llm.generate(prompt).strip().lower()
         for key in SPECIALISTS:
             if key in result:
-                log.info("ORCHESTRATOR: tarefa → %s", key)
+                log.info("ORCHESTRATOR: tarefa → %s (model=%s)", key, manager_llm.model)
                 return key
         return "geral"
 
@@ -159,7 +201,7 @@ class OrchestratorAgent:
             f"Tarefa: {task}\n"
             "JSON:"
         )
-        raw = self.llm.generate(prompt)
+        raw = self._get_llm(get_manager_model()).generate(prompt)
         m   = re.search(r'\[.*?\]', raw, re.DOTALL)
         if not m:
             return [{"subtask": task, "specialist": self._classify(task)}]
@@ -198,10 +240,14 @@ class OrchestratorAgent:
         tools = ([self.all_tools[t] for t in spec["tools"] if t in self.all_tools]
                  if spec["tools"] else list(self.all_tools.values()))
 
+        model          = get_specialist_model(specialist_name)
+        specialist_llm = self._get_llm(model)
+
         agent = ReActAgent(
-            llm=self.llm,
+            llm=specialist_llm,
             tools=tools,
             specialist_context=SPECIALIST_PROMPTS.get(specialist_name, ""),
+            session_id=self.session_id,
         )
         agent._cancel = self._cancel
         if "remember_fact" in agent.tools:
@@ -218,14 +264,18 @@ class OrchestratorAgent:
 
         specialist_name = self._classify(task)
         spec_label      = SPECIALISTS[specialist_name]["label"]
-        emit({"type": "thought", "content": f"Especialista: {spec_label}"})
-        log.info("ORCHESTRATOR → %s", spec_label)
+        spec_model      = get_specialist_model(specialist_name)
+        emit({"type": "thought", "content": f"Especialista: {spec_label} · {spec_model}"})
+        log.info("ORCHESTRATOR → %s (model=%s)", spec_label, spec_model)
+
+        if spec_model not in OrchestratorAgent._llm_cache:
+            emit({"type": "thought", "content": f"Carregando modelo '{spec_model}'..."})
 
         agent = self._create_specialist(specialist_name)
         with self._lock:
             self._active.append(agent)
         try:
-            return agent.run(task, max_steps=15, step_callback=step_callback)
+            return agent.run(task, step_callback=step_callback)
         finally:
             with self._lock:
                 if agent in self._active:
@@ -261,7 +311,8 @@ class OrchestratorAgent:
             label   = SPECIALISTS[name]["label"]
             subtask = assignment["subtask"]
 
-            emit({"type": "agent_status", "agent": label, "status": "running", "subtask": subtask})
+            spec_model = get_specialist_model(name)
+            emit({"type": "agent_status", "agent": f"{label}·{spec_model}", "status": "running", "subtask": subtask})
 
             agent = self._create_specialist(name)
             with self._lock:
@@ -312,7 +363,7 @@ class OrchestratorAgent:
     # -----------------------------------------------------------------
     # Entrada principal
     # -----------------------------------------------------------------
-    def run(self, task: str, max_steps: int = 15, step_callback=None) -> str:
+    def run(self, task: str, max_steps: int = 0, step_callback=None) -> str:
         if self._cancel.is_set():
             return "Cancelado."
 

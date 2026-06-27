@@ -6,11 +6,36 @@ __pycache__/
 venv/
 env/
 
-# Agente
+# Dados pessoais e sensíveis — NUNCA commitar
 agent_memory.json
+agent_memory_backup.json
+gdrive_credentials.json
+gdrive_token.json
 workspace/
+*.db
+*.pkl
+
+# Arquivos de teste
 teste.txt
+test.txt
+
+# Segredos
+.env
+.env.*
+secrets.json
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env*
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# IDEs
+.idea/
+.vscode/
+*.swp

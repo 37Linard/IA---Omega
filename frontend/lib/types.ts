@@ -8,12 +8,16 @@ export type StepType =
   | 'error'
   | 'agent_status'
   | 'plan'
+  | 'correction'
+  | 'reflection'
 
 export interface AgentStep {
   id: string
   type: StepType
   content: string
   agent?: string
+  score?: number      // reflection score 1-5
+  accepted?: boolean  // reflection accepted
 }
 
 export interface TokenUsage {
@@ -64,5 +68,9 @@ export type WsMessage =
   | { type: 'final'; content: string }
   | { type: 'done'; content: string }
   | { type: 'error'; content: string }
+  | { type: 'correction'; content: string }
+  | { type: 'reflection'; content: string; score: number; accepted: boolean }
+  | { type: 'reset_content'; content: string }
   | { type: 'token_usage'; prompt: number; completion: number }
   | { type: 'agent_status'; agent: string; status: 'running' | 'done'; subtask?: string; result?: string }
+  | { type: 'hitl_request'; id: string; action: string; input: unknown; message: string }

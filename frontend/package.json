@@ -13,6 +13,7 @@
     "@radix-ui/react-scroll-area": "^1.2.12",
     "@radix-ui/react-tooltip": "^1.2.10",
     "@types/react-syntax-highlighter": "^15.5.13",
+    "@xyflow/react": "^12.11.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",

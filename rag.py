@@ -2,16 +2,20 @@ import hashlib
 import json
 import logging
 import os
+import pickle
 import re
 
 import chromadb
 
 log = logging.getLogger(__name__)
 
-RAG_DIR      = os.path.join(os.path.dirname(__file__), "workspace", "rag_db")
-RAG_META     = os.path.join(os.path.dirname(__file__), "workspace", "rag_meta.json")
-CHUNK_SIZE   = 500   # chars por chunk
-CHUNK_OVERLAP = 100  # sobreposição entre chunks
+RAG_DIR       = os.path.join(os.path.dirname(__file__), "workspace", "rag_db")
+RAG_META      = os.path.join(os.path.dirname(__file__), "workspace", "rag_meta.json")
+BM25_CACHE    = os.path.join(os.path.dirname(__file__), "workspace", "bm25_cache.pkl")
+CHUNK_SIZE    = 500
+CHUNK_OVERLAP = 100
+SUPPORTED_EXT = {".pdf", ".txt", ".md", ".docx"}
+BM25_ALPHA    = 0.65  # peso para busca semântica (1-α para BM25)
 
 
 # ---------------------------------------------------------------------------
@@ -29,6 +33,68 @@ def _chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP)
 
 
 # ---------------------------------------------------------------------------
+# BM25 Index — busca por palavras-chave complementando a busca semântica
+# ---------------------------------------------------------------------------
+class _BM25Store:
+    def __init__(self):
+        self.corpus: list[str]  = []
+        self.meta:   list[dict] = []
+        self._bm25              = None
+        self._load()
+
+    def _load(self):
+        if os.path.exists(BM25_CACHE):
+            try:
+                with open(BM25_CACHE, "rb") as f:
+                    data = pickle.load(f)
+                self.corpus = data.get("corpus", [])
+                self.meta   = data.get("meta", [])
+                self._build()
+            except Exception:
+                pass
+
+    def _build(self):
+        if self.corpus:
+            try:
+                from rank_bm25 import BM25Okapi
+                self._bm25 = BM25Okapi([doc.lower().split() for doc in self.corpus])
+            except ImportError:
+                pass
+
+    def _save(self):
+        os.makedirs(os.path.dirname(BM25_CACHE), exist_ok=True)
+        with open(BM25_CACHE, "wb") as f:
+            pickle.dump({"corpus": self.corpus, "meta": self.meta}, f)
+
+    def add(self, docs: list[str], metas: list[dict]):
+        self.corpus.extend(docs)
+        self.meta.extend(metas)
+        self._build()
+        self._save()
+
+    def remove_file(self, fname: str):
+        pairs = [(d, m) for d, m in zip(self.corpus, self.meta) if m.get("file") != fname]
+        if pairs:
+            self.corpus, self.meta = map(list, zip(*pairs))
+        else:
+            self.corpus, self.meta = [], []
+        self._bm25 = None
+        if self.corpus:
+            self._build()
+        self._save()
+
+    def search(self, query: str, n: int = 10) -> list[tuple[str, dict, float]]:
+        if not self._bm25 or not self.corpus:
+            return []
+        scores = self._bm25.get_scores(query.lower().split())
+        max_s  = max(scores) if len(scores) > 0 else 1.0
+        if max_s == 0:
+            return []
+        indexed = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)[:n]
+        return [(self.corpus[i], self.meta[i], float(s / max_s)) for i, s in indexed if s > 0]
+
+
+# ---------------------------------------------------------------------------
 # RAGIndex — ChromaDB com coleção de chunks de PDF
 # ---------------------------------------------------------------------------
 class RAGIndex:
@@ -40,6 +106,7 @@ class RAGIndex:
             metadata={"hnsw:space": "cosine"},
         )
         self._meta       = self._load_meta()
+        self._bm25       = _BM25Store()
 
     # ------------------------------------------------------------------
     def _load_meta(self) -> dict:
@@ -114,7 +181,7 @@ class RAGIndex:
                 metadatas=chunks_meta[i:i+batch],
             )
 
-        # Salva metadados
+        self._bm25.add(chunks_docs, chunks_meta)
         self._meta["docs"][fname] = {
             "hash":   fhash,
             "path":   path,
@@ -133,37 +200,189 @@ class RAGIndex:
                 self._collection.delete(ids=existing["ids"])
         except Exception as e:
             log.warning("RAG._remove_doc: %s", e)
+        self._bm25.remove_file(fname)
 
     # ------------------------------------------------------------------
     def search(self, query: str, n: int = 5, file_filter: str | None = None) -> list[dict]:
-        """Busca semântica nos chunks. Retorna lista de {text, file, page, score}."""
+        """Busca híbrida: semântica (ChromaDB) + palavras-chave (BM25)."""
         total = self._collection.count()
         if total == 0:
             return []
-        k = min(n, total)
+        k = min(n * 2, total)
 
+        # ── Semantic search ──
         where = {"file": file_filter} if file_filter else None
         try:
-            kwargs = {"query_texts": [query], "n_results": k}
+            kwargs: dict = {"query_texts": [query], "n_results": k}
             if where:
                 kwargs["where"] = where
             res = self._collection.query(**kwargs)
         except Exception as e:
-            log.warning("RAG.search: %s", e)
+            log.warning("RAG.search semantic: %s", e)
             return []
 
+        semantic_map: dict[str, dict] = {}
+        docs_s  = res.get("documents",  [[]])[0]
+        metas_s = res.get("metadatas",  [[]])[0]
+        dists_s = res.get("distances",  [[]])[0]
+        for doc, meta, dist in zip(docs_s, metas_s, dists_s):
+            sem_score = round(max(0.0, 1 - dist), 4)
+            semantic_map[doc] = {
+                "text":      doc,
+                "file":      meta.get("file", ""),
+                "page":      meta.get("page", 0),
+                "semantic":  sem_score,
+                "bm25":      0.0,
+            }
+
+        # ── BM25 search ──
+        for text, meta, bm25_score in self._bm25.search(query, n=k):
+            if file_filter and meta.get("file") != file_filter:
+                continue
+            if text in semantic_map:
+                semantic_map[text]["bm25"] = bm25_score
+            else:
+                semantic_map[text] = {
+                    "text": text,
+                    "file": meta.get("file", ""),
+                    "page": meta.get("page", 0),
+                    "semantic": 0.0,
+                    "bm25": bm25_score,
+                }
+
+        # ── Hybrid score ──
+        combined = []
+        for item in semantic_map.values():
+            item["score"] = round(BM25_ALPHA * item["semantic"] + (1 - BM25_ALPHA) * item["bm25"], 3)
+            combined.append(item)
+
+        combined.sort(key=lambda x: x["score"], reverse=True)
+        return [{"text": r["text"], "file": r["file"], "page": r["page"], "score": r["score"]} for r in combined[:n]]
+
+    # ------------------------------------------------------------------
+    def index_txt(self, path: str) -> dict:
+        """Indexa arquivo de texto plano (.txt ou .md). Idempotente por hash."""
+        fname = os.path.basename(path)
+        fhash = self._file_hash(path)
+
+        if self._meta["docs"].get(fname, {}).get("hash") == fhash:
+            n = self._meta["docs"][fname]["chunks"]
+            return {"status": "already_indexed", "file": fname, "chunks": n}
+
+        if fname in self._meta["docs"]:
+            self._remove_doc(fname)
+
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+
+        chunks_list = _chunk_text(text)
+        if not chunks_list:
+            return {"status": "error", "file": fname, "error": "Arquivo vazio ou sem texto válido"}
+
+        chunk_ids  = [f"{fname}__c{i}" for i in range(len(chunks_list))]
+        chunk_meta = [{"file": fname, "page": 1, "chunk": i} for i in range(len(chunks_list))]
+
+        batch = 100
+        for i in range(0, len(chunk_ids), batch):
+            self._collection.upsert(
+                ids=chunk_ids[i:i+batch],
+                documents=chunks_list[i:i+batch],
+                metadatas=chunk_meta[i:i+batch],
+            )
+
+        self._bm25.add(chunks_list, chunk_meta)
+        self._meta["docs"][fname] = {"hash": fhash, "path": path, "chunks": len(chunk_ids), "pages": 1}
+        self._save_meta()
+        log.info("RAG: indexado %s — %d chunks", fname, len(chunk_ids))
+        return {"status": "indexed", "file": fname, "chunks": len(chunk_ids)}
+
+    # ------------------------------------------------------------------
+    def index_docx(self, path: str) -> dict:
+        """Indexa arquivo Word .docx. Idempotente por hash."""
+        try:
+            import docx as _docx
+        except ImportError:
+            return {"status": "error", "file": os.path.basename(path), "error": "python-docx não instalado. Execute: pip install python-docx"}
+
+        fname = os.path.basename(path)
+        fhash = self._file_hash(path)
+
+        if self._meta["docs"].get(fname, {}).get("hash") == fhash:
+            n = self._meta["docs"][fname]["chunks"]
+            return {"status": "already_indexed", "file": fname, "chunks": n}
+
+        if fname in self._meta["docs"]:
+            self._remove_doc(fname)
+
+        doc  = _docx.Document(path)
+        text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+
+        chunks_list = _chunk_text(text)
+        if not chunks_list:
+            return {"status": "error", "file": fname, "error": "Documento vazio"}
+
+        chunk_ids  = [f"{fname}__c{i}" for i in range(len(chunks_list))]
+        chunk_meta = [{"file": fname, "page": 1, "chunk": i} for i in range(len(chunks_list))]
+
+        batch = 100
+        for i in range(0, len(chunk_ids), batch):
+            self._collection.upsert(
+                ids=chunk_ids[i:i+batch],
+                documents=chunks_list[i:i+batch],
+                metadatas=chunk_meta[i:i+batch],
+            )
+
+        self._bm25.add(chunks_list, chunk_meta)
+        self._meta["docs"][fname] = {"hash": fhash, "path": path, "chunks": len(chunk_ids), "pages": 1}
+        self._save_meta()
+        return {"status": "indexed", "file": fname, "chunks": len(chunk_ids)}
+
+    # ------------------------------------------------------------------
+    def index_file(self, path: str) -> dict:
+        """Indexa arquivo pelo tipo detectado pela extensão."""
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".pdf":
+            return self.index_pdf(path)
+        elif ext in (".txt", ".md"):
+            return self.index_txt(path)
+        elif ext == ".docx":
+            return self.index_docx(path)
+        else:
+            return {"status": "error", "file": os.path.basename(path), "error": f"Tipo não suportado: {ext}. Suportados: {SUPPORTED_EXT}"}
+
+    # ------------------------------------------------------------------
+    def index_folder(self, folder: str, recursive: bool = False) -> list[dict]:
+        """Indexa todos os arquivos suportados em uma pasta."""
+        if not os.path.isdir(folder):
+            return [{"status": "error", "file": folder, "error": "Pasta não encontrada"}]
+
         results = []
-        docs   = res.get("documents",  [[]])[0]
-        metas  = res.get("metadatas",  [[]])[0]
-        dists  = res.get("distances",  [[]])[0]
-        for doc, meta, dist in zip(docs, metas, dists):
-            results.append({
-                "text":  doc,
-                "file":  meta.get("file", ""),
-                "page":  meta.get("page", 0),
-                "score": round(max(0.0, 1 - dist), 3),  # cosine dist → similaridade [0,1]
-            })
+        walk = os.walk(folder) if recursive else [(folder, [], os.listdir(folder))]
+        for dirpath, _, filenames in walk:
+            for fname in sorted(filenames):
+                ext = os.path.splitext(fname)[1].lower()
+                if ext not in SUPPORTED_EXT:
+                    continue
+                fpath = os.path.join(dirpath, fname)
+                try:
+                    result = self.index_file(fpath)
+                except Exception as e:
+                    result = {"status": "error", "file": fname, "error": str(e)}
+                results.append(result)
+
+        if not results:
+            return [{"status": "empty", "file": folder, "error": f"Nenhum arquivo suportado encontrado ({', '.join(SUPPORTED_EXT)})"}]
         return results
+
+    # ------------------------------------------------------------------
+    def delete_doc(self, fname: str) -> dict:
+        """Remove documento do índice."""
+        if fname not in self._meta["docs"]:
+            return {"status": "error", "error": f"'{fname}' não encontrado no índice"}
+        self._remove_doc(fname)
+        del self._meta["docs"][fname]
+        self._save_meta()
+        return {"status": "deleted", "file": fname}
 
     # ------------------------------------------------------------------
     def list_docs(self) -> list[dict]:

@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Menu, Sun, Moon, User, Heart, Cpu, ChevronDown } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { Menu, Sun, Moon, User, Heart, Cpu, Database, Trash2, FolderOpen, RefreshCw, CheckCircle, XCircle, Loader2, Layers, GitGraph } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
-import { fetchModels, setModel, fetchProfile, saveProfile } from '@/lib/api'
+import { fetchModels, setModel, fetchProfile, saveProfile, fetchRagDocs, ragIndexFolder, ragDeleteDoc, uploadFile, fetchMetrics, fetchSandboxStatus, fetchSpecialistModels, setSpecialistModel } from '@/lib/api'
+import { ThoughtTree } from './ThoughtTree'
 import type { UserProfile } from '@/lib/types'
 
 interface Props { onToggleSidebar: () => void }
@@ -15,6 +16,9 @@ export function Header({ onToggleSidebar }: Props) {
   const [currentModel, setCurrentModel] = useState('')
   const [profileOpen, setProfileOpen] = useState(false)
   const [healthOpen, setHealthOpen] = useState(false)
+  const [ragOpen, setRagOpen] = useState(false)
+  const [modelsOpen, setModelsOpen] = useState(false)
+  const [nocOpen,    setNocOpen]    = useState(false)
   const [profile, setProfile] = useState<UserProfile | null>(null)
 
   useEffect(() => {
@@ -97,6 +101,18 @@ export function Header({ onToggleSidebar }: Props) {
             </div>
           )}
 
+          <HeaderBtn onClick={() => setNocOpen(true)} title="NOC — Arvore de Raciocinio">
+            <GitGraph size={15} />
+          </HeaderBtn>
+
+          <HeaderBtn onClick={() => setModelsOpen(true)} title="Modelos por Especialista">
+            <Layers size={15} />
+          </HeaderBtn>
+
+          <HeaderBtn onClick={() => setRagOpen(true)} title="Indexação de documentos (RAG)">
+            <Database size={15} />
+          </HeaderBtn>
+
           <HeaderBtn onClick={() => setProfileOpen(true)} title="Perfil">
             <User size={15} />
           </HeaderBtn>
@@ -111,6 +127,14 @@ export function Header({ onToggleSidebar }: Props) {
         </div>
       </header>
 
+      {nocOpen && (
+        <ThoughtTree
+          steps={(conv?.messages.filter(m => m.role === 'assistant').at(-1)?.steps) ?? []}
+          onClose={() => setNocOpen(false)}
+        />
+      )}
+      {modelsOpen && <SpecialistModelsModal models={models} onClose={() => setModelsOpen(false)} />}
+      {ragOpen && <RagModal onClose={() => setRagOpen(false)} />}
       {profileOpen && profile && (
         <ProfileModal profile={profile} onSave={async d => { const u = await saveProfile(d); setProfile(u); setProfileOpen(false) }} onClose={() => setProfileOpen(false)} />
       )}
@@ -237,25 +261,489 @@ function ProfileModal({ profile, onSave, onClose }: { profile: UserProfile; onSa
   )
 }
 
-function HealthModal({ onClose }: { onClose: () => void }) {
-  const [data, setData] = useState<Record<string, unknown> | null>(null)
+type Metrics = Awaited<ReturnType<typeof fetchMetrics>>
 
-  useEffect(() => {
-    fetch('http://localhost:8000/health')
-      .then(r => r.json())
-      .then(setData)
-      .catch(() => setData({ error: 'Servidor indisponível' }))
+type SandboxStatus = { mode: 'docker' | 'local'; docker: boolean; image: string | null; custom?: boolean; warning: string | null }
+
+function HealthModal({ onClose }: { onClose: () => void }) {
+  const [metrics, setMetrics] = useState<Metrics | null>(null)
+  const [sandbox, setSandbox] = useState<SandboxStatus | null>(null)
+  const [error, setError] = useState(false)
+
+  const load = useCallback(async () => {
+    try {
+      const [m, s] = await Promise.all([fetchMetrics(), fetchSandboxStatus()])
+      setMetrics(m)
+      setSandbox(s)
+      setError(false)
+    }
+    catch { setError(true) }
   }, [])
 
+  useEffect(() => {
+    load()
+    const id = setInterval(load, 8000)
+    return () => clearInterval(id)
+  }, [load])
+
+  const inf = metrics?.inference
+  const vram = metrics?.vram
+  const tools = metrics?.tools ?? []
+
   return (
-    <Modal title="❤️ Status do Sistema" onClose={onClose}>
-      {!data ? (
-        <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Carregando...</p>
-      ) : (
-        <pre style={{ fontSize: '12px', fontFamily: 'monospace', whiteSpace: 'pre-wrap', color: 'var(--text-secondary)', lineHeight: 1.7, margin: 0 }}>
-          {JSON.stringify(data, null, 2)}
-        </pre>
-      )}
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div
+        style={{
+          background: 'var(--surface)',
+          border: '1px solid var(--border-strong)',
+          borderRadius: 'var(--radius-lg)',
+          width: '100%',
+          maxWidth: '500px',
+          maxHeight: '85vh',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
+        }}
+        className="anim-fade-up"
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Heart size={14} style={{ color: '#f87171' }} />
+            <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>Dashboard de Performance</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>auto-refresh 8s</span>
+            <button onClick={onClose} style={{ color: 'var(--text-muted)', background: 'none', fontSize: '18px', cursor: 'pointer' }}>×</button>
+          </div>
+        </div>
+
+        <div style={{ overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {error && (
+            <p style={{ fontSize: '13px', color: '#f87171', textAlign: 'center' }}>Backend indisponível</p>
+          )}
+
+          {/* Inference metrics */}
+          <div>
+            <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)', marginBottom: '10px', letterSpacing: '0.05em' }}>INFERÊNCIA</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
+              <MetricCard label="Tokens/s" value={inf ? `${inf.tps}` : '—'} unit="TPS" color="#4ade80" />
+              <MetricCard label="1º Token" value={inf ? `${inf.ttft_ms}` : '—'} unit="ms" color="#60a5fa" />
+              <MetricCard label="Contexto" value={inf ? `${inf.context_pct}` : '—'} unit="%" color={inf && inf.context_pct > 80 ? '#f87171' : '#a78bfa'} />
+            </div>
+            {inf && (
+              <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px', textAlign: 'right' }}>
+                {inf.prompt_tokens} prompt + {inf.completion_tokens} completion tokens na sessão
+              </p>
+            )}
+          </div>
+
+          {/* VRAM */}
+          {vram && vram.total_mb > 0 && (
+            <div>
+              <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)', marginBottom: '10px', letterSpacing: '0.05em' }}>VRAM — GPU</p>
+              <div style={{ background: 'var(--surface-hover)', borderRadius: '6px', height: '8px', overflow: 'hidden', marginBottom: '6px' }}>
+                <div style={{
+                  height: '100%',
+                  width: `${vram.pct}%`,
+                  background: vram.pct > 90 ? '#f87171' : vram.pct > 75 ? '#fbbf24' : '#4ade80',
+                  transition: 'width 0.5s ease',
+                }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)' }}>
+                <span>{vram.used_mb} MB usados</span>
+                <span style={{ color: vram.pct > 90 ? '#f87171' : 'var(--text-muted)' }}>{vram.pct}% de {vram.total_mb} MB</span>
+                <span>{vram.free_mb} MB livres</span>
+              </div>
+            </div>
+          )}
+
+          {/* Sandbox status */}
+          {sandbox && (
+            <div>
+              <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)', marginBottom: '10px', letterSpacing: '0.05em' }}>SANDBOX — run_python</p>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: '10px',
+                background: 'var(--surface-hover)', borderRadius: '8px', padding: '10px 14px',
+                border: `1px solid ${sandbox.mode === 'docker' && sandbox.custom ? '#4ade80' : sandbox.mode === 'docker' ? '#fbbf24' : '#f87171'}30`,
+              }}>
+                <div style={{
+                  width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
+                  background: sandbox.mode === 'docker' && sandbox.custom ? '#4ade80' : sandbox.mode === 'docker' ? '#fbbf24' : '#f87171',
+                }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: '12px', color: 'var(--text-primary)', fontWeight: 500 }}>
+                    {sandbox.mode === 'docker'
+                      ? (sandbox.custom ? 'Docker isolado (ia-sandbox)' : 'Docker isolado (python:3.12-slim)')
+                      : 'Execucao local (sem isolamento)'}
+                  </p>
+                  {sandbox.image && (
+                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'monospace', marginTop: '2px' }}>{sandbox.image}</p>
+                  )}
+                  {sandbox.warning && (
+                    <p style={{ fontSize: '11px', color: '#fbbf24', marginTop: '4px', lineHeight: 1.4 }}>{sandbox.warning}</p>
+                  )}
+                  {!sandbox.warning && sandbox.custom && (
+                    <p style={{ fontSize: '11px', color: '#4ade80', marginTop: '2px' }}>numpy · pandas · matplotlib · scipy disponíveis</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Tool stats */}
+          <div>
+            <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)', marginBottom: '10px', letterSpacing: '0.05em' }}>FERRAMENTAS — ÚLTIMOS 7 DIAS</p>
+            {tools.length === 0 ? (
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', padding: '12px' }}>Nenhuma chamada registrada ainda.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '220px', overflowY: 'auto' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: '8px', padding: '4px 8px', fontSize: '10px', fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+                  <span>FERRAMENTA</span><span style={{ textAlign: 'right' }}>CHAMADAS</span><span style={{ textAlign: 'right' }}>AVG</span><span style={{ textAlign: 'right' }}>SUCESSO</span>
+                </div>
+                {tools.map(t => (
+                  <div key={t.tool} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto', gap: '8px', padding: '6px 8px', background: 'var(--surface-hover)', borderRadius: '6px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '12px', color: 'var(--text-primary)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.tool}</span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'right' }}>{t.calls}×</span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'right' }}>{t.avg_ms}ms</span>
+                    <span style={{ fontSize: '11px', fontWeight: 600, textAlign: 'right', color: t.success_rate >= 90 ? '#4ade80' : t.success_rate >= 70 ? '#fbbf24' : '#f87171' }}>
+                      {t.success_rate}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function MetricCard({ label, value, unit, color }: { label: string; value: string; unit: string; color: string }) {
+  return (
+    <div style={{
+      background: 'var(--surface-hover)',
+      border: '1px solid var(--border)',
+      borderRadius: '8px',
+      padding: '12px',
+      textAlign: 'center',
+    }}>
+      <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '6px' }}>{label}</p>
+      <p style={{ fontSize: '22px', fontWeight: 700, color, lineHeight: 1, fontFamily: 'monospace' }}>{value}</p>
+      <p style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '4px' }}>{unit}</p>
+    </div>
+  )
+}
+
+type RagDoc = { file: string; chunks: number; pages?: number; path?: string }
+type IndexResult = { status: string; file: string; chunks?: number; error?: string }
+
+function RagModal({ onClose }: { onClose: () => void }) {
+  const [docs, setDocs] = useState<RagDoc[]>([])
+  const [folderPath, setFolderPath] = useState('')
+  const [recursive, setRecursive] = useState(false)
+  const [indexing, setIndexing] = useState(false)
+  const [results, setResults] = useState<IndexResult[]>([])
+  const [dragging, setDragging] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const loadDocs = useCallback(async () => {
+    try { const d = await fetchRagDocs(); setDocs(d.docs) } catch {}
+  }, [])
+
+  useEffect(() => { loadDocs() }, [loadDocs])
+
+  const handleIndexFolder = async () => {
+    if (!folderPath.trim()) return
+    setIndexing(true)
+    setResults([])
+    try {
+      const r = await ragIndexFolder(folderPath.trim(), recursive)
+      setResults(r.results)
+      await loadDocs()
+    } catch (e: unknown) {
+      setResults([{ status: 'error', file: folderPath, error: String(e) }])
+    } finally {
+      setIndexing(false)
+    }
+  }
+
+  const handleDelete = async (fname: string) => {
+    try { await ragDeleteDoc(fname); await loadDocs() } catch {}
+  }
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault()
+    setDragging(false)
+    const files = Array.from(e.dataTransfer.files)
+    if (!files.length) return
+    setUploading(true)
+    const r: IndexResult[] = []
+    for (const f of files) {
+      try {
+        const res = await uploadFile(f)
+        r.push({ status: 'indexed', file: res.name, chunks: (res.rag as { chunks?: number } | undefined)?.chunks })
+      } catch {
+        r.push({ status: 'error', file: f.name, error: 'Falha no upload' })
+      }
+    }
+    setResults(r)
+    setUploading(false)
+    await loadDocs()
+  }
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div
+        style={{
+          background: 'var(--surface)',
+          border: '1px solid var(--border-strong)',
+          borderRadius: 'var(--radius-lg)',
+          width: '100%',
+          maxWidth: '520px',
+          maxHeight: '80vh',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
+        }}
+        className="anim-fade-up"
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Database size={15} style={{ color: 'var(--accent)' }} />
+            <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>Indexação de Documentos (RAG)</span>
+          </div>
+          <button onClick={onClose} style={{ color: 'var(--text-muted)', background: 'none', fontSize: '18px', cursor: 'pointer' }}>×</button>
+        </div>
+
+        <div style={{ overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+
+          {/* Drag & Drop zone */}
+          <div>
+            <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)', marginBottom: '8px' }}>ARRASTAR ARQUIVOS</p>
+            <input ref={fileInputRef} type="file" multiple accept=".pdf,.txt,.md,.docx" style={{ display: 'none' }} onChange={async e => {
+              const files = Array.from(e.target.files ?? [])
+              if (!files.length) return
+              setUploading(true)
+              const r: IndexResult[] = []
+              for (const f of files) {
+                try { const res = await uploadFile(f); r.push({ status: 'indexed', file: res.name }) }
+                catch { r.push({ status: 'error', file: f.name, error: 'Falha' }) }
+              }
+              setResults(r); setUploading(false); await loadDocs()
+              if (fileInputRef.current) fileInputRef.current.value = ''
+            }} />
+            <div
+              onDragOver={e => { e.preventDefault(); setDragging(true) }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                border: `2px dashed ${dragging ? 'var(--accent)' : 'var(--border-strong)'}`,
+                borderRadius: 'var(--radius-sm)',
+                padding: '24px',
+                textAlign: 'center',
+                cursor: 'pointer',
+                background: dragging ? 'var(--accent-glow)' : 'var(--surface-hover)',
+                transition: 'all 0.15s',
+              }}
+            >
+              {uploading
+                ? <Loader2 size={20} style={{ color: 'var(--accent)', animation: 'spin 1s linear infinite', margin: '0 auto 8px' }} />
+                : <Database size={20} style={{ color: dragging ? 'var(--accent)' : 'var(--text-muted)', margin: '0 auto 8px' }} />
+              }
+              <p style={{ fontSize: '13px', color: dragging ? 'var(--accent)' : 'var(--text-muted)' }}>
+                {uploading ? 'Indexando...' : 'Arraste PDF, TXT, MD, DOCX ou clique para selecionar'}
+              </p>
+            </div>
+          </div>
+
+          {/* Indexar pasta */}
+          <div>
+            <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)', marginBottom: '8px' }}>INDEXAR PASTA LOCAL</p>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <div style={{ position: 'relative', flex: 1 }}>
+                <FolderOpen size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+                <input
+                  value={folderPath}
+                  onChange={e => setFolderPath(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleIndexFolder() }}
+                  placeholder="C:\Users\User\Documents\Docs"
+                  style={{ ...inputStyle, paddingLeft: '30px', width: '100%', boxSizing: 'border-box' }}
+                />
+              </div>
+              <button
+                onClick={handleIndexFolder}
+                disabled={indexing || !folderPath.trim()}
+                style={{
+                  padding: '8px 14px',
+                  background: indexing || !folderPath.trim() ? 'var(--surface-active)' : 'var(--accent)',
+                  color: indexing || !folderPath.trim() ? 'var(--text-muted)' : '#fff',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  cursor: indexing || !folderPath.trim() ? 'not-allowed' : 'pointer',
+                  flexShrink: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {indexing ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <RefreshCw size={13} />}
+                {indexing ? 'Indexando...' : 'Indexar'}
+              </button>
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px', cursor: 'pointer' }}>
+              <input type="checkbox" checked={recursive} onChange={e => setRecursive(e.target.checked)} />
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Incluir subpastas</span>
+            </label>
+          </div>
+
+          {/* Resultados da indexação */}
+          {results.length > 0 && (
+            <div>
+              <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)', marginBottom: '8px' }}>RESULTADO</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '140px', overflowY: 'auto' }}>
+                {results.map((r, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', padding: '5px 8px', background: 'var(--surface-hover)', borderRadius: '6px' }}>
+                    {r.status === 'indexed' || r.status === 'already_indexed'
+                      ? <CheckCircle size={13} style={{ color: '#4ade80', flexShrink: 0 }} />
+                      : <XCircle size={13} style={{ color: '#f87171', flexShrink: 0 }} />}
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>{r.file}</span>
+                    <span style={{ color: 'var(--text-muted)', flexShrink: 0 }}>
+                      {r.status === 'indexed' ? `${r.chunks} chunks` : r.status === 'already_indexed' ? 'já indexado' : r.error}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Documentos indexados */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)' }}>
+                DOCUMENTOS INDEXADOS ({docs.length})
+              </p>
+              <button onClick={loadDocs} style={{ color: 'var(--text-muted)', background: 'none', cursor: 'pointer', padding: '2px' }}>
+                <RefreshCw size={12} />
+              </button>
+            </div>
+            {docs.length === 0 ? (
+              <p style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', padding: '16px' }}>
+                Nenhum documento indexado ainda.
+              </p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '200px', overflowY: 'auto' }}>
+                {docs.map(doc => (
+                  <div key={doc.file} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px', background: 'var(--surface-hover)', borderRadius: '6px' }}>
+                    <Database size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ fontSize: '12px', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.file}</p>
+                      <p style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                        {doc.chunks} chunks{doc.pages && doc.pages > 1 ? ` · ${doc.pages} págs` : ''}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleDelete(doc.file)}
+                      title="Remover do índice"
+                      style={{ color: 'var(--text-muted)', background: 'none', cursor: 'pointer', padding: '3px', flexShrink: 0, borderRadius: '4px' }}
+                      onMouseEnter={e => { e.currentTarget.style.color = '#f87171' }}
+                      onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)' }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <p style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center' }}>
+            Suportados: PDF · TXT · MD · DOCX — Diga "busque em meus documentos..." para pesquisar
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+type SpecialistEntry = { key: string; label: string; model: string }
+
+function SpecialistModelsModal({ models, onClose }: { models: string[]; onClose: () => void }) {
+  const [specialists, setSpecialists] = useState<SpecialistEntry[]>([])
+  const [saving, setSaving] = useState<string | null>(null)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    fetchSpecialistModels()
+      .then(d => setSpecialists(d.specialists))
+      .catch(() => setError(true))
+  }, [])
+
+  const handleChange = async (key: string, model: string) => {
+    setSaving(key)
+    try {
+      await setSpecialistModel(key, model)
+      setSpecialists(prev => prev.map(s => s.key === key ? { ...s, model } : s))
+    } catch {
+      setError(true)
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  return (
+    <Modal title="Modelos por Especialista" onClose={onClose}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        {error && (
+          <p style={{ fontSize: '12px', color: '#f87171' }}>Erro ao carregar. Backend disponível?</p>
+        )}
+        {specialists.length === 0 && !error && (
+          <div style={{ textAlign: 'center', padding: '16px' }}>
+            <Loader2 size={18} style={{ color: 'var(--accent)', animation: 'spin 1s linear infinite', margin: '0 auto' }} />
+          </div>
+        )}
+        {specialists.map(s => (
+          <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)', minWidth: '110px', flexShrink: 0 }}>
+              {s.label}
+            </span>
+            <select
+              value={s.model}
+              onChange={e => handleChange(s.key, e.target.value)}
+              disabled={saving === s.key}
+              style={{
+                ...inputStyle,
+                fontSize: '12px',
+                padding: '6px 10px',
+                opacity: saving === s.key ? 0.6 : 1,
+              }}
+            >
+              {models.map(m => (
+                <option key={m} value={m} style={{ background: '#1a1a1a' }}>{m}</option>
+              ))}
+            </select>
+            {saving === s.key && (
+              <Loader2 size={13} style={{ color: 'var(--accent)', animation: 'spin 1s linear infinite', flexShrink: 0 }} />
+            )}
+          </div>
+        ))}
+        <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.6 }}>
+          Mudancas aplicadas imediatamente. Sem reiniciar.
+        </p>
+      </div>
     </Modal>
   )
 }

@@ -156,7 +156,23 @@ export function MessageBubble({ message, onRegenerate }: Props) {
                   return <a href={href} target="_blank" rel="noreferrer">{children}</a>
                 },
                 img({ src, alt }) {
-                  return src ? <img src={src} alt={alt ?? ''} /> : null
+                  if (!src) return null
+                  return (
+                    <img
+                      src={src}
+                      alt={alt ?? ''}
+                      style={{
+                        maxWidth: '100%',
+                        borderRadius: '8px',
+                        border: '1px solid var(--border)',
+                        marginTop: '8px',
+                        marginBottom: '8px',
+                        display: 'block',
+                        boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+                      }}
+                      loading="lazy"
+                    />
+                  )
                 },
               }}
             >

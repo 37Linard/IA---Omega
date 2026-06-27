@@ -1,7 +1,7 @@
 import os
 
 
-SAFE_DIR = r"C:\Users\User\Desktop\MEU\IA\workspace"
+SAFE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "workspace")
 
 
 class WriteFileTool:

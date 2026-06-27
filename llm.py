@@ -14,10 +14,36 @@ class OllamaLLM:
     def __init__(self, model: str = "qwen2.5:7b"):
         self.model          = model
         self.base_url       = OLLAMA_URL
-        self.session_tokens = {"prompt": 0, "completion": 0}
+        self.session_tokens = {
+            "prompt": 0, "completion": 0,
+            "tps": 0.0, "ttft_ms": 0.0, "context_pct": 0.0,
+        }
 
     def reset_tokens(self):
-        self.session_tokens = {"prompt": 0, "completion": 0}
+        self.session_tokens = {
+            "prompt": 0, "completion": 0,
+            "tps": 0.0, "ttft_ms": 0.0, "context_pct": 0.0,
+        }
+
+    def _update_stats(self, data: dict):
+        eval_count    = data.get("eval_count", 0)
+        eval_dur_ns   = data.get("eval_duration", 0)
+        prompt_count  = data.get("prompt_eval_count", 0)
+        prompt_dur_ns = data.get("prompt_eval_duration", 0)
+        load_dur_ns   = data.get("load_duration", 0)
+
+        self.session_tokens["prompt"]     += prompt_count
+        self.session_tokens["completion"] += eval_count
+
+        if eval_dur_ns > 0 and eval_count > 0:
+            self.session_tokens["tps"] = round(eval_count / (eval_dur_ns / 1e9), 1)
+
+        ttft_ns = load_dur_ns + prompt_dur_ns
+        if ttft_ns > 0:
+            self.session_tokens["ttft_ms"] = round(ttft_ns / 1e6, 0)
+
+        if prompt_count > 0 and NUM_CTX > 0:
+            self.session_tokens["context_pct"] = round(prompt_count / NUM_CTX * 100, 1)
 
     def generate(self, prompt: str, on_token=None) -> str:
         """Gera resposta com retry automático em caso de falha."""
@@ -27,7 +53,7 @@ class OllamaLLM:
             "stream": on_token is not None,
             "options": {
                 "temperature": TEMPERATURE,
-                "stop": ["Observation:"],
+                "stop": ["Observation:", "Observação:", "\nObservation:", "\nObservação:"],
                 "num_predict": NUM_PREDICT,
                 "num_ctx": NUM_CTX,
                 "num_gpu": NUM_GPU,
@@ -44,8 +70,7 @@ class OllamaLLM:
                     )
                     response.raise_for_status()
                     data = response.json()
-                    self.session_tokens["prompt"]     += data.get("prompt_eval_count", 0)
-                    self.session_tokens["completion"] += data.get("eval_count", 0)
+                    self._update_stats(data)
                     return data["response"].strip()
 
                 full_response = ""
@@ -68,8 +93,7 @@ class OllamaLLM:
                             full_response += token
                             on_token(token)
                         if data.get("done"):
-                            self.session_tokens["prompt"]     += data.get("prompt_eval_count", 0)
-                            self.session_tokens["completion"] += data.get("eval_count", 0)
+                            self._update_stats(data)
                             break
                 return full_response.strip()
 
@@ -81,6 +105,17 @@ class OllamaLLM:
                     raise RuntimeError(f"Ollama não respondeu após {MAX_RETRIES} tentativas.") from e
             except requests.HTTPError as e:
                 raise RuntimeError(f"Erro Ollama: {e}") from e
+
+    def embed(self, text: str) -> list[float]:
+        """Generate embedding vector via Ollama (nomic-embed-text)."""
+        from config import EMBED_MODEL
+        r = requests.post(
+            f"{self.base_url}/api/embeddings",
+            json={"model": EMBED_MODEL, "prompt": text},
+            timeout=30
+        )
+        r.raise_for_status()
+        return r.json()["embedding"]
 
     def generate_vision(self, prompt: str, image_b64: str, model: str = "") -> str:
         """Analisa imagem com modelo multimodal."""
@@ -104,3 +139,39 @@ class OllamaLLM:
                     raise RuntimeError(f"Ollama vision não respondeu após {MAX_RETRIES} tentativas.") from e
             except requests.HTTPError as e:
                 raise RuntimeError(f"Erro Ollama vision: {e}") from e
+
+
+class OllamaEmbeddingFunction:
+    """ChromaDB-compatible embedding function using Ollama (nomic-embed-text)."""
+
+    def __init__(self, model: str, url: str):
+        self.model = model
+        self.url   = url
+
+    def __call__(self, input: list[str]) -> list[list[float]]:
+        embeddings = []
+        for text in input:
+            try:
+                r = requests.post(
+                    f"{self.url}/api/embeddings",
+                    json={"model": self.model, "prompt": text},
+                    timeout=30
+                )
+                r.raise_for_status()
+                embeddings.append(r.json()["embedding"])
+            except Exception as e:
+                log.warning("OllamaEmbeddingFunction: %s", e)
+                embeddings.append([0.0] * 768)
+        return embeddings
+
+    @staticmethod
+    def is_available(model: str, url: str) -> bool:
+        try:
+            r = requests.post(
+                f"{url}/api/embeddings",
+                json={"model": model, "prompt": "test"},
+                timeout=5
+            )
+            return r.status_code == 200 and "embedding" in r.json()
+        except Exception:
+            return False
