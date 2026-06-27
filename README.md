@@ -1,8 +1,10 @@
-# 🤖 Agente IA Local
+# 🤖 Agente IA Local — v1.0
 
 > Assistente de IA autônomo rodando **100% na sua máquina** — sem APIs externas, sem custos por token, sem dados saindo do seu PC.
 
 Usa Ollama para inferência local, arquitetura ReAct para raciocínio passo a passo, e 27 ferramentas reais para executar tarefas complexas.
+
+**v1.0** — Tiered Memory · Reflection Loop · Multi-model por especialista · Docker Sandbox · Visual Browser · NOC Dashboard + HITL
 
 ---
 
@@ -44,8 +46,20 @@ IA:   [Raciocínio] Vou buscar o preço, gerar o chart e salvar...
 - **TPS** — tokens por segundo gerados pela GPU
 - **TTFT** — latência até o primeiro token (ms)
 - **Uso do contexto** — % do context window usado (alerta em >80%)
-- **VRAM** — barra de uso de memória da GPU
+- **VRAM** — barra de uso de memória da GPU + temperatura + power draw
 - **Taxa de sucesso por ferramenta** — últimos 7 dias
+- **Sandbox status** — Docker isolado vs. fallback local
+
+### v1.0 — Funcionalidades Avançadas
+
+| Fase | Feature |
+|---|---|
+| 1 | **Tiered Memory** — Redis (curta), ChromaDB+BM25 (episódica), grafo semântico (longo prazo) |
+| 2 | **Reflection Loop** — critic LLM avalia resposta (score 1-5), retry se abaixo do threshold |
+| 3 | **Multi-model** — modelo diferente por especialista, troca sem restart via UI |
+| 4 | **Docker Sandbox** — `run_python` em container isolado (sem rede, 256MB RAM, sem root) |
+| 5 | **Visual Browser** — Playwright + VLM: agente vê páginas como imagens, screenshots inline no chat |
+| 6 | **NOC + HITL** — React Flow com árvore de raciocínio, Human-in-the-Loop para ferramentas sensíveis |
 
 ### Multi-agente
 O agente principal delega tarefas para especialistas:
@@ -86,10 +100,16 @@ O agente decide sozinho qual usar baseado na tarefa.
 | **Integrações** | `email`, `notion`, `slack`, `google_drive`, `get_currency` |
 
 ### Sandbox de segurança
-- `run_python` → Docker isolado (sem rede, 128MB RAM, 0.5 CPU, read-only FS)
+- `run_python` → Docker isolado (sem rede, 256MB RAM, 1 CPU, user 65534, sem root) — fallback local com aviso se Docker offline
 - `terminal` → whitelist de comandos permitidos
 - `http_request` → SSRF bloqueado (IPs privados bloqueados)
 - `read_file` → whitelist de pastas configurável
+- `browser` → headless Chromium, screenshot analisado por VLM local
+
+```bash
+# Buildar sandbox com numpy/pandas/matplotlib/scipy
+build_sandbox.bat
+```
 
 ---
 
@@ -126,8 +146,11 @@ ollama pull llama3.2:3b
 # Mais capaz (4.7GB)
 ollama pull qwen2.5:7b
 
-# Para análise de imagens
-ollama pull llava:7b
+# Visual Browser — VLM local (cabe em 2GB VRAM)
+ollama pull moondream:1.8b
+
+# Embeddings locais — melhora busca RAG em português
+ollama pull nomic-embed-text
 ```
 
 ### 3. Configurar
@@ -170,20 +193,35 @@ Abrir: **http://localhost:3000**
 Tudo em `config.py`:
 
 ```python
-# Modelo
-OLLAMA_MODEL      = "llama3.2:3b"   # qualquer modelo Ollama
-VISION_MODEL      = "llava:7b"      # para analyze_image
+# Modelos
+OLLAMA_MODEL      = "llama3.2:3b"    # qualquer modelo Ollama
+VISION_MODEL      = "moondream:1.8b" # VLM para browser visual (cabe em 2GB VRAM)
+MANAGER_MODEL     = ""               # modelo para roteamento — vazio = herda OLLAMA_MODEL
 
 # Performance
-NUM_PREDICT       = 400             # max tokens por step
-NUM_CTX           = 3072            # context window
+MAX_STEPS         = 8               # iterações ReAct por tarefa
+NUM_PREDICT       = 700             # tokens por step (baixo → trunca → mais loops)
+NUM_CTX           = 4096            # context window
 TEMPERATURE       = 0.1
 
 # Limites de segurança
 TOOL_TIMEOUT      = 30              # segundos por ferramenta
-MAX_TOOL_CALLS    = 25              # chamadas por tarefa
+MAX_TOOL_CALLS    = 15              # chamadas por tarefa
 MAX_TOOL_RETRIES  = 3               # tentativas de auto-correção
 TASK_TIMEOUT      = 300             # timeout total da tarefa
+
+# Reflection Loop
+REFLECTION_ENABLED   = True
+REFLECTION_THRESHOLD = 2            # retry se score <= 2 (1-5)
+
+# Human-in-the-Loop
+HITL_ENABLED         = False
+HITL_BEFORE_TOOLS    = ["email", "write_file", "terminal"]
+
+# Especialistas com modelos diferentes
+SPECIALIST_MODELS = {
+    # "codigo": "qwen2.5-coder:7b",
+}
 
 # Autenticação (deixe vazio para desativar)
 AUTH_PASSWORD     = ""
@@ -316,18 +354,25 @@ openpyxl
 
 ## 🗺️ Roadmap
 
-### v0.5 — próxima
-- [ ] DAG Workflow Visualization — grafo interativo da execução (React Flow)
-- [ ] Embeddings locais — `nomic-embed-text` via Ollama para melhor busca em português
-- [ ] Geração de imagens — Stable Diffusion via Automatic1111 API
-- [ ] Exibir imagens/gráficos gerados diretamente no chat
+### v1.0 — Entregue ✅
+- [x] Tiered Memory (Redis + ChromaDB + Knowledge Graph)
+- [x] Reflection Loop (critic LLM, score 1-5, retry automático)
+- [x] Multi-model por especialista (troca sem restart)
+- [x] Docker Sandbox para `run_python` (isolamento total)
+- [x] Visual Browser (Playwright + VLM, screenshots inline no chat)
+- [x] NOC Dashboard — React Flow thought tree
+- [x] Human-in-the-Loop (pausa agente, usuário aprova/rejeita)
+
+### v1.1 — Próxima
+- [ ] Geração de imagens — Stable Diffusion via API local
+- [ ] Exibir imagens geradas inline no chat (além de screenshots)
+- [ ] Export de conversa para Markdown/Obsidian
+- [ ] Auto-detect nível técnico do usuário por padrões de conversa
 
 ### Futuro
 - [ ] LanceDB — substituir ChromaDB (mais rápido, serverless)
-- [ ] Auto-detect nível do usuário por padrões de conversa
-- [ ] Export de conversa para Markdown/Obsidian
 - [ ] WhatsApp Business API
-- [ ] WASM sandbox (alternativa ao Docker — inicialização instantânea)
+- [ ] WASM sandbox (alternativa ao Docker — boot instantâneo)
 - [ ] Plugin marketplace (instalar tools por URL)
 
 ---
@@ -344,6 +389,8 @@ Backend sim. Os `.bat` são Windows — no Mac/Linux use os comandos diretos do 
 - `llama3.2:3b` — mais rápido, bom para tarefas simples (2GB VRAM)
 - `qwen2.5:7b` — melhor qualidade geral (4.7GB VRAM)
 - `deepseek-r1:8b` — melhor raciocínio (5GB VRAM)
+- `moondream:1.8b` — VLM para visual browser (1.5GB VRAM, pull separado)
+- `nomic-embed-text` — embeddings locais para RAG (pull separado)
 
 **Docker é obrigatório?**
 Não. Sem Docker o `run_python` executa localmente com timeout de 10s. Com Docker tem isolamento total.
