@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 AUDIT_DB = os.path.join(os.path.dirname(__file__), "workspace", "audit.db")
 log      = logging.getLogger(__name__)
@@ -38,6 +38,36 @@ def log_action(tool: str, input_data, output: str, duration: float = 0.0, ip: st
             )
     except Exception as e:
         log.warning("audit.log_action: %s", e)
+
+
+def tool_stats(days: int = 7) -> list[dict]:
+    """Retorna taxa de sucesso por ferramenta nos últimos N dias."""
+    try:
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        with _conn() as c:
+            rows = c.execute(
+                "SELECT tool, output, duration FROM audit_log WHERE ts > ?", (cutoff,)
+            ).fetchall()
+        stats: dict[str, dict] = {}
+        for tool, output, duration in rows:
+            if tool not in stats:
+                stats[tool] = {"tool": tool, "calls": 0, "errors": 0, "total_ms": 0.0}
+            stats[tool]["calls"]    += 1
+            stats[tool]["total_ms"] += (duration or 0) * 1000
+            out = (output or "").strip()
+            if out.startswith("Erro:") or out.startswith("Bloqueado:") or "Traceback" in out[:80]:
+                stats[tool]["errors"] += 1
+        result = []
+        for s in stats.values():
+            calls  = s["calls"]
+            errors = s["errors"]
+            s["success_rate"] = round((calls - errors) / calls * 100, 1) if calls > 0 else 100.0
+            s["avg_ms"]       = round(s["total_ms"] / calls, 0) if calls > 0 else 0
+            del s["total_ms"]
+            result.append(s)
+        return sorted(result, key=lambda x: x["calls"], reverse=True)
+    except Exception:
+        return []
 
 
 def query(limit: int = 100, tool_filter: str = "") -> list[dict]:

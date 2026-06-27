@@ -5,10 +5,18 @@ import { persist } from 'zustand/middleware'
 import type { Conversation, Message, AgentStep } from '@/lib/types'
 import { generateId, extractTitle } from '@/lib/utils'
 
+export interface HitlRequest {
+  id: string
+  action: string
+  input: unknown
+  message: string
+}
+
 interface ChatState {
   conversations: Conversation[]
   activeId: string | null
   theme: 'dark' | 'light'
+  hitlRequest: HitlRequest | null
 
   // Actions
   newConversation: () => string
@@ -21,9 +29,11 @@ interface ChatState {
   addStep: (msgId: string, step: Omit<AgentStep, 'id'>) => void
   appendThought: (msgId: string, token: string) => void
   finalizeMessage: (msgId: string, content?: string) => void
+  resetContent: (msgId: string) => void
   setTokenUsage: (msgId: string, prompt: number, completion: number) => void
   setError: (msgId: string, error: string) => void
   setFeedback: (msgId: string, feedback: 'up' | 'down') => void
+  setHitlRequest: (req: HitlRequest | null) => void
   toggleTheme: () => void
   getActive: () => Conversation | undefined
   renameConversation: (id: string, title: string) => void
@@ -35,6 +45,7 @@ export const useChatStore = create<ChatState>()(
       conversations: [],
       activeId: null,
       theme: 'dark',
+      hitlRequest: null,
 
       newConversation: () => {
         const id = generateId()
@@ -208,6 +219,21 @@ export const useChatStore = create<ChatState>()(
         }))
       },
 
+      resetContent: (msgId) => {
+        set(s => ({
+          conversations: s.conversations.map(c =>
+            c.id === s.activeId
+              ? {
+                  ...c,
+                  messages: c.messages.map(m =>
+                    m.id === msgId ? { ...m, content: '', isStreaming: true } : m
+                  ),
+                }
+              : c
+          ),
+        }))
+      },
+
       setTokenUsage: (msgId, prompt, completion) => {
         set(s => ({
           conversations: s.conversations.map(c =>
@@ -253,6 +279,8 @@ export const useChatStore = create<ChatState>()(
         }))
       },
 
+      setHitlRequest: (req) => set({ hitlRequest: req }),
+
       toggleTheme: () => set(s => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
 
       getActive: () => {
@@ -265,10 +293,11 @@ export const useChatStore = create<ChatState>()(
       partialize: (s) => ({
         conversations: s.conversations.map(c => ({
           ...c,
-          messages: c.messages.slice(-100), // keep last 100 messages per conv
+          messages: c.messages.slice(-100),
         })),
         activeId: s.activeId,
         theme: s.theme,
+        // hitlRequest excluded — ephemeral
       }),
     }
   )

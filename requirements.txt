@@ -14,3 +14,5 @@ pyautogui
 Pillow
 pyperclip
 playwright
+redis
+networkx

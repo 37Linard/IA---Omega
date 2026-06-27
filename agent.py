@@ -12,12 +12,15 @@ if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-from config import TOOL_TIMEOUT, MAX_TOOL_CALLS
+from config import TOOL_TIMEOUT, MAX_TOOL_CALLS, MAX_TOOL_RETRIES, MAX_STEPS, REFLECTION_ENABLED, REFLECTION_THRESHOLD, HITL_ENABLED, HITL_BEFORE_TOOLS
 import audit
 from memory import Memory
 from user_profile import UserProfile
 
 ERROR_LOG = os.path.join(os.path.dirname(__file__), "workspace", "error_log.json")
+
+# Human-in-the-Loop registry — hitl_id → {"event": Event, "approved": bool|None}
+_HITL_REGISTRY: dict = {}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -71,40 +74,14 @@ Final Answer: [resposta completa — use APENAS dados das Observations. NUNCA ci
 Ferramentas disponíveis:
 {tools_description}
 
-EXEMPLOS DE USO CORRETO:
-
-Exemplo 1 — cotação do dólar:
-Thought: Preciso da cotação do dólar em reais. Vou usar get_currency com BRL.
+EXEMPLO:
+Thought: Preciso buscar o preço do dólar.
 Action: get_currency
 Action Input: {{"currency": "BRL"}}
 
-Exemplo 2 — pesquisa:
-Thought: Preciso pesquisar sobre Python.
-Action: web_search
-Action Input: {{"query": "Python programming language"}}
-
-Exemplo 3 — ler arquivo:
-Thought: Vou ler o arquivo de configuração.
-Action: read_file
-Action Input: {{"path": "C:/Users/User/Desktop/MEU/IA/teste.txt"}}
-
-Exemplo 4 — executar código:
-Thought: Vou calcular isso com Python.
-Action: run_python
-Action Input: {{"code": "print(sum(range(1, 101)))"}}
-
-Exemplo 5 — ler planilha:
-Thought: Vou ler a planilha Excel.
-Action: read_spreadsheet
-Action Input: {{"path": "C:/Users/User/Desktop/dados.xlsx", "rows": 30}}
-
-Exemplo 6 — gerar gráfico:
-Thought: Vou criar um gráfico de barras com os dados.
-Action: generate_chart
-Action Input: {{"type": "bar", "labels": ["Jan", "Fev", "Mar"], "values": [100, 150, 130], "title": "Vendas", "output": "grafico.png"}}
-
 MAPEAMENTO DE TAREFAS → FERRAMENTAS:
-- cotação/dólar/euro/moeda/câmbio → get_currency
+- bitcoin/ethereum/cripto/BTC/ETH/preço de crypto/RSI → get_crypto com {{"symbol": "bitcoin"}}
+- cotação/dólar/euro/libra/moeda fiat/câmbio (NÃO cripto) → get_currency
 - pesquisa/notícia/informação geral → web_search
 - acessar URL / extrair conteúdo de página → fetch_page
 - salvar nota no Obsidian → save_note
@@ -129,6 +106,19 @@ MAPEAMENTO DE TAREFAS → FERRAMENTAS:
 - buscar em PDF/documento indexado → rag_search
 - criar nota no Notion → notion
 - enviar mensagem no Slack → slack
+- ler/criar/editar Google Docs/Drive → google_drive
+- preço/cotação/análise/RSI/indicadores de cripto/bitcoin/ethereum → get_crypto com {{"symbol": "bitcoin"}} ou {{"symbol": "btc"}}
+- criar relatório estruturado/análise formal/documento de análise → generate_report
+
+PESQUISA E ANÁLISE AVANÇADA:
+- Para crypto/finanças: use get_crypto (dados técnicos) + web_search (notícias/contexto) juntos — nunca só uma fonte
+- Para pesquisas importantes: consulte 2+ fontes e compare antes de concluir
+- Após tarefas de monitoramento/análise recorrente, ofereça: "Deseja que eu execute isso automaticamente todo dia? Posso enviar alerta via Slack ou email se o preço cair X%."
+- Adapte profundidade ao perfil do usuário: iniciante → linguagem simples sem siglas; especialista → inclua RSI, MA, volatilidade, etc.
+
+RELATÓRIOS:
+- Para análises financeiras, de mercado ou pesquisas complexas: use generate_report para estruturar o resultado profissionalmente
+- Sempre inclua: resumo executivo, dados brutos, análise técnica, alertas identificados e fontes
 
 SEGURANÇA:
 - Nunca execute código destrutivo sem confirmação
@@ -137,15 +127,17 @@ SEGURANÇA:
 
 REGRAS CRÍTICAS:
 - Action Input SEMPRE em JSON válido com chaves duplas
-- NUNCA invente observações — aguarde o sistema
-- NUNCA repita a mesma Action se já recebeu observação
+- NUNCA escreva "Observação" ou "Observation" no seu Thought — observações são fornecidas EXCLUSIVAMENTE pelo sistema após cada Action
+- NUNCA invente dados, preços ou resultados — aguarde a Observation real do sistema
+- NUNCA repita a mesma Action+Input se já recebeu observação com esse input
 - Use Final Answer quando tiver a resposta
-- NUNCA cite fonte específica (Wise, Google, etc.) que não acessou via ferramenta
+- NUNCA cite fonte específica que não apareceu em Observation real
+- Para Bitcoin/Ethereum/cripto: use OBRIGATORIAMENTE get_crypto com {{"symbol": "bitcoin"}} — NUNCA get_currency para cripto
 """
 
 
 class ReActAgent:
-    def __init__(self, llm, tools: list, specialist_context: str = ""):
+    def __init__(self, llm, tools: list, specialist_context: str = "", session_id: str = ""):
         self.llm                = llm
         self.tools              = {t.name: t for t in tools} if isinstance(tools, list) else tools
         self.scratchpad         = []
@@ -154,6 +146,8 @@ class ReActAgent:
         self._cancel            = threading.Event()
         self.conversation       = []  # [{task, result}, ...]
         self.specialist_context = specialist_context
+        self.session_id         = session_id
+        self._emit              = None  # set at run() start — used by HITL gate
 
     def _log_error(self, task: str, error_type: str, details: str):
         try:
@@ -180,6 +174,11 @@ class ReActAgent:
 
     def reset_cancel(self):
         self._cancel.clear()
+
+    @staticmethod
+    def _is_tool_error(output: str) -> bool:
+        lo = output.lstrip()[:120].lower()
+        return any(s in lo for s in ("erro:", "error:", "traceback", "exception:", "bloqueado:"))
 
     def _build_tools_description(self) -> str:
         return "\n".join(
@@ -220,7 +219,7 @@ class ReActAgent:
         now = datetime.now().strftime("%d/%m/%Y %H:%M, %A")
         system = SYSTEM_PROMPT.format(
             tools_description=self._build_tools_description(),
-            memory_context=self.memory.get_context(task),
+            memory_context=self.memory.get_context(task, session_id=self.session_id),
             user_profile_context=self.profile.get_system_context(),
             current_datetime=now
         )
@@ -312,12 +311,38 @@ class ReActAgent:
 
         return action, action_input
 
+    def _hitl_gate(self, action: str, action_input) -> bool:
+        """Emite hitl_request, bloqueia thread até usuário aprovar/rejeitar ou timeout."""
+        import uuid as _uuid
+        hitl_id = str(_uuid.uuid4())
+        event   = threading.Event()
+        _HITL_REGISTRY[hitl_id] = {"event": event, "approved": None}
+        if self._emit:
+            self._emit({
+                "type":    "hitl_request",
+                "id":      hitl_id,
+                "action":  action,
+                "input":   action_input if isinstance(action_input, dict) else str(action_input),
+                "message": f"Agente quer executar '{action}'. Aprovar?",
+            })
+        # Espera com poll a cada 1s para checar cancelamento
+        while not event.wait(timeout=1.0):
+            if self._cancel.is_set():
+                _HITL_REGISTRY.pop(hitl_id, None)
+                return False
+        entry = _HITL_REGISTRY.pop(hitl_id, {})
+        return bool(entry.get("approved", False))
+
     def _execute_tool(self, action: str, action_input) -> str:
         if action not in self.tools:
             return f"Ferramenta '{action}' não existe. Disponíveis: {list(self.tools.keys())}"
         self._tool_calls += 1
         if self._tool_calls > MAX_TOOL_CALLS:
             return f"Bloqueado: limite de {MAX_TOOL_CALLS} chamadas de ferramentas atingido nesta tarefa."
+        # HITL gate — pausa e pede aprovação antes de ferramentas sensíveis
+        if HITL_ENABLED and action in HITL_BEFORE_TOOLS:
+            if not self._hitl_gate(action, action_input):
+                return "Acao cancelada pelo usuario (Human-in-the-Loop)."
         t0 = time.monotonic()
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
             future = ex.submit(self.tools[action].run, action_input)
@@ -330,21 +355,59 @@ class ReActAgent:
         audit.log_action(action, action_input, result, duration=time.monotonic() - t0)
         return result
 
-    def _is_compound(self, task: str) -> bool:
-        # Fast-path: tarefa curta ou sem indicadores de sequência → não é composta
+    def _detect_tool_hint(self, task: str) -> str:
+        """Detecta ferramenta mais provável e injeta dica no scratchpad inicial."""
         t = task.lower()
-        seq_indicators = [" e ", " depois", " então", " em seguida", " salve", " crie", " escreva", " liste", " execute"]
-        if len(task) < 20 or not any(kw in t for kw in seq_indicators):
-            return False
+        if any(k in t for k in ("bitcoin", "btc", "ethereum", "eth", "cripto", "crypto", "rsi", "binance", "solana")):
+            return 'Thought: Para dados de criptomoeda devo usar get_crypto com {"symbol": "bitcoin"} (nunca get_currency).\n'
+        if any(k in t for k in ("dólar", "dollar", "euro", "libra", "câmbio", "cotação", "moeda")):
+            return 'Thought: Para cotação de moeda fiat devo usar get_currency com {"currency": "BRL"}.\n'
+        if any(k in t for k in ("relatório", "relatorio", "análise formal", "analise formal", "gere um documento")):
+            return 'Thought: Para gerar relatório estruturado devo usar generate_report.\n'
+        return ""
 
+    def _reflect(self, task: str, answer: str) -> tuple[int, str, list[str]]:
+        """Critic: avalia a resposta e retorna (score 1-5, hint, issues)."""
         prompt = (
-            'Responda APENAS "SIM" ou "NÃO":\n'
-            "A tarefa abaixo requer múltiplos passos sequenciais usando ferramentas diferentes?\n\n"
-            f"Tarefa: {task}\n"
-            "Resposta:"
+            "Avalie se a resposta responde completamente a pergunta.\n\n"
+            f"PERGUNTA: {task[:300]}\n"
+            f"RESPOSTA: {answer[:500]}\n\n"
+            "Responda APENAS em JSON (sem texto extra):\n"
+            '{"score": 4, "issues": [], "hint": ""}\n\n'
+            "score: 5=perfeita 4=boa 3=incompleta 2=incorreta 1=irrelevante\n"
+            "Se score>=4: issues=[], hint=\"\"\n"
+            "JSON:"
         )
-        response = self.llm.generate(prompt).strip().upper()
-        return "SIM" in response
+        try:
+            raw   = self.llm.generate(prompt)
+            block = self._find_json_block(raw)
+            if not block:
+                return 4, "", []
+            data  = json.loads(block)
+            score = max(1, min(5, int(data.get("score", 4))))
+            hint  = str(data.get("hint", "")).strip()
+            issues = [str(i) for i in data.get("issues", []) if i]
+            return score, hint, issues
+        except Exception as e:
+            log.debug("_reflect: %s", e)
+            return 4, "", []
+
+    def _is_compound(self, task: str) -> bool:
+        if len(task) < 30:
+            return False
+        t = task.lower()
+        # Padrões que indicam claramente múltiplas ferramentas sequenciais
+        compound_patterns = [
+            r"pesquise.{1,40}e salve",
+            r"busque.{1,40}e salve",
+            r"pesquise.{1,40}e escreva",
+            r"calcule.{1,40}e salve",
+            r"crie.{1,40}e depois",
+            r"pesquise.{1,40}e depois",
+            r"primeiro.{1,60}depois",
+            r"baixe.{1,40}e salve",
+        ]
+        return any(re.search(p, t) for p in compound_patterns)
 
     def _plan(self, task: str, emit) -> list:
         emit({"type": "step", "content": "Planejando subtarefas..."})
@@ -408,6 +471,9 @@ class ReActAgent:
             emit({"type": "token_end", "content": ""})
 
             clean = re.split(r'\n\s*Observa[cç][aã]o:', response)[0].strip()
+            _parts = re.split(r'\n(?=Thought:)', clean)
+            if len(_parts) > 1:
+                clean = _parts[0].strip()
             self.scratchpad.append(clean)
 
             try:
@@ -475,14 +541,17 @@ class ReActAgent:
 
         return on_token, final_started
 
-    def run(self, task: str, max_steps: int = 15, step_callback=None) -> str:
+    def run(self, task: str, max_steps: int = MAX_STEPS, step_callback=None) -> str:
         self.scratchpad  = []
         self._tool_calls = 0
+        self._reflected  = False   # previne loop infinito de reflection
         log.info("TAREFA: %s", task)
 
         def emit(data: dict):
             if step_callback:
                 step_callback(data)
+
+        self._emit = emit  # expõe para _hitl_gate
 
         # Tarefa composta → Plan-then-Execute
         if self._is_compound(task):
@@ -506,14 +575,21 @@ class ReActAgent:
             )
             emit({"type": "final", "content": final})
             emit({"type": "done", "content": ""})
-            self.memory.save_session(task, final[:200], results)
+            self.memory.save_session_with_llm(task, final[:200], results, self.llm, self.session_id)
             self.conversation = self.conversation[-4:]
             self.conversation.append({"task": task, "result": final[:250]})
             return final
 
-        last_action_key = None
-        loop_count      = 0
-        self.scratchpad = []
+        last_action_key    = None
+        loop_count         = 0
+        last_observation   = None   # última observação real recebida
+        self.scratchpad    = []
+        _tool_retry_counts: dict[str, int] = {}
+
+        # Injeta dica de ferramenta no step 0 baseado em padrões da tarefa
+        _tool_hint = self._detect_tool_hint(task)
+        if _tool_hint:
+            self.scratchpad.append(_tool_hint)
 
         for step in range(max_steps):
             if self._cancel.is_set():
@@ -539,8 +615,12 @@ class ReActAgent:
             else:
                 emit({"type": "token_end", "content": ""})
 
-            # Remove observações inventadas pelo modelo
+            # Remove observações inventadas e steps extras alucinados
             clean_response = re.split(r'\n\s*Observa[cç][aã]o:', response)[0].strip()
+            # Mantém apenas o primeiro bloco Thought+Action+Input (trunca na 2ª ocorrência de Thought:)
+            _parts = re.split(r'\n(?=Thought:)', clean_response)
+            if len(_parts) > 1:
+                clean_response = _parts[0].strip()
 
             print(clean_response)
             self.scratchpad.append(clean_response)
@@ -569,12 +649,21 @@ class ReActAgent:
             if action_key == last_action_key:
                 loop_count += 1
                 if loop_count >= 2:
-                    hint = (
-                        f"Thought: Estou repetindo {action} com os mesmos parâmetros e não está funcionando. "
-                        f"Preciso tentar abordagem diferente ou usar outra ferramenta.\n"
+                    emit({"type": "error", "content": f"Loop detectado em '{action}'. Forçando conclusão."})
+                    # Se já tem observação, usa ela como Final Answer direto
+                    if last_observation:
+                        log.info("LOOP: forçando Final Answer com última observação")
+                        forced = f"Com base nos dados coletados:\n\n{last_observation}"
+                        emit({"type": "final", "content": forced})
+                        self.memory.save_session_with_llm(task, forced[:200], self.scratchpad, self.llm, self.session_id)
+                        self.conversation = self.conversation[-4:]
+                        self.conversation.append({"task": task, "result": forced[:250]})
+                        return forced
+                    # Sem observação — injeta instrução forte de troca de ferramenta
+                    self.scratchpad.append(
+                        f"Thought: Loop em '{action}' — esta ferramenta não está funcionando para esta tarefa. "
+                        f"DEVO usar outra ferramenta diferente ou escrever Final Answer agora.\n"
                     )
-                    self.scratchpad.append(hint)
-                    emit({"type": "error", "content": f"Loop detectado em {action}. Forçando correção."})
                     loop_count = 0
                     last_action_key = None
                     continue
@@ -584,9 +673,39 @@ class ReActAgent:
 
             if action == "Final Answer":
                 log.info("RESPOSTA FINAL: %s", action_input[:200])
+
+                # Reflection loop — critica antes de aceitar
+                if REFLECTION_ENABLED and not self._reflected:
+                    self._reflected = True
+                    score, hint, issues = self._reflect(task, action_input)
+                    rc = f"Score {score}/5"
+                    if issues:
+                        rc += " — " + "; ".join(issues[:2])
+                    emit({
+                        "type":     "reflection",
+                        "content":  rc,
+                        "score":    score,
+                        "accepted": score >= REFLECTION_THRESHOLD,
+                    })
+                    log.info("REFLECTION: score=%d hint=%s", score, hint[:80] if hint else "")
+
+                    if score < REFLECTION_THRESHOLD:
+                        # Streaming já emitiu tokens — reseta conteúdo no frontend
+                        if _fs[0]:
+                            emit({"type": "reset_content", "content": ""})
+                        retry_hint = (
+                            f"Thought: Minha resposta foi avaliada com score {score}/5 (minimo={REFLECTION_THRESHOLD}).\n"
+                            + (f"Problemas: {'; '.join(issues)}\n" if issues else "")
+                            + (f"Como melhorar: {hint}\n" if hint else "")
+                            + "Vou reescrever a Final Answer de forma mais completa e precisa.\n"
+                        )
+                        self.scratchpad.append(retry_hint)
+                        log.info("REFLECTION: reescrevendo resposta...")
+                        continue
+
                 if not _fs[0]:
                     emit({"type": "final", "content": action_input})
-                self.memory.save_session(task, action_input[:200], self.scratchpad)
+                self.memory.save_session_with_llm(task, action_input[:200], self.scratchpad, self.llm, self.session_id)
                 self.conversation = self.conversation[-4:]
                 self.conversation.append({"task": task, "result": action_input[:250]})
                 return action_input
@@ -598,7 +717,26 @@ class ReActAgent:
             log.info("RESULTADO: %s", observation[:300])
             emit({"type": "observation", "content": observation})
 
-            self.scratchpad.append(f"Observation: {observation}")
+            retry_key = f"{action}::{json.dumps(action_input, sort_keys=True)}"
+            if self._is_tool_error(observation):
+                retries = _tool_retry_counts.get(retry_key, 0)
+                if retries < MAX_TOOL_RETRIES:
+                    _tool_retry_counts[retry_key] = retries + 1
+                    emit({"type": "correction", "content": f"Auto-correção {retries + 1}/{MAX_TOOL_RETRIES}: erro em '{action}' — analisando..."})
+                    self.scratchpad.append(
+                        f"Observation: [ERRO — TENTATIVA {retries + 1}/{MAX_TOOL_RETRIES}]\n"
+                        f"{observation}\n"
+                        f"Thought: Erro na ferramenta '{action}'. Vou analisar a causa e tentar uma abordagem diferente."
+                    )
+                    continue
+                else:
+                    _tool_retry_counts.pop(retry_key, None)
+                    emit({"type": "error", "content": f"Máximo de tentativas ({MAX_TOOL_RETRIES}) atingido para '{action}'."})
+                    self.scratchpad.append(f"Observation: {observation}")
+            else:
+                _tool_retry_counts.pop(retry_key, None)
+                last_observation = observation
+                self.scratchpad.append(f"Observation: {observation}")
 
         self._log_error(task, "max_steps", f"Atingiu {max_steps} steps sem Final Answer")
         emit({"type": "error", "content": "Limite de passos atingido."})

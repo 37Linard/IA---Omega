@@ -6,6 +6,7 @@ import { useChatStore } from '@/store/chatStore'
 import { MessageBubble } from './MessageBubble'
 import { MessageInput } from './MessageInput'
 import { useAgentWebSocket } from '@/hooks/useAgentWebSocket'
+import { HitlOverlay } from './HitlOverlay'
 
 const SUGGESTIONS = [
   { icon: Search, text: 'Pesquise as últimas notícias sobre IA e me faça um resumo' },
@@ -21,7 +22,7 @@ export function ChatArea() {
   const containerRef = useRef<HTMLDivElement>(null)
   const autoScroll  = useRef(true)
 
-  const { connect, sendTask, cancelTask, connected, running } = useAgentWebSocket()
+  const { connect, sendTask, cancelTask, respondHitl, connected, running } = useAgentWebSocket()
 
   useEffect(() => { connect() }, [connect])
 
@@ -98,6 +99,11 @@ export function ChatArea() {
           connected={connected}
         />
       </div>
+
+      <HitlOverlay
+        onApprove={(id) => respondHitl(id, true)}
+        onReject={(id) => respondHitl(id, false)}
+      />
     </div>
   )
 }

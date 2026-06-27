@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
 
-WORKSPACE = r"C:\Users\User\Desktop\MEU\IA\workspace"
+WORKSPACE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "workspace")
 
 
 class ScreenshotTool:

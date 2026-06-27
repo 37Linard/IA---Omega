@@ -4,10 +4,9 @@ import requests
 class GetCurrencyTool:
     name = "get_currency"
     description = (
-        "Retorna cotação atual de moedas. "
-        "IMPORTANTE: para saber valor do DÓLAR EM REAIS use currency='BRL' (não 'USD'). "
-        "Input: {'currency': 'BRL'} — código ISO: BRL, EUR, GBP, JPY, etc. "
-        "Passar 'USD' retorna 1.0 — sem utilidade."
+        "Retorna cotação de moedas FIAT (dólar, euro, libra). "
+        "NÃO use para Bitcoin/Ethereum/criptomoedas — use get_crypto para isso. "
+        "Input: {'currency': 'BRL'} — código ISO: BRL, EUR, GBP, JPY, etc."
     )
 
     def run(self, input_data: dict) -> str:

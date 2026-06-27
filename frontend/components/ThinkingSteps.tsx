@@ -1,30 +1,57 @@
 'use client'
 
 import { useState } from 'react'
-import { ChevronRight, Brain, Zap, Eye, AlertCircle, Bot, Loader2 } from 'lucide-react'
+import { ChevronRight, Brain, Zap, Eye, AlertCircle, Bot, Loader2, RefreshCw, ShieldCheck, ShieldAlert } from 'lucide-react'
 import type { AgentStep } from '@/lib/types'
 
 const CFG = {
-  thought:      { Icon: Brain,        label: 'Raciocínio', color: '#818cf8', bg: 'rgba(99,102,241,0.08)', border: 'rgba(99,102,241,0.2)' },
-  action:       { Icon: Zap,          label: 'Ação',       color: '#fbbf24', bg: 'rgba(251,191,36,0.08)',  border: 'rgba(251,191,36,0.2)'  },
-  observation:  { Icon: Eye,          label: 'Resultado',  color: '#34d399', bg: 'rgba(52,211,153,0.08)',  border: 'rgba(52,211,153,0.2)'  },
-  step:         { Icon: Bot,          label: 'Passo',      color: '#60a5fa', bg: 'rgba(96,165,250,0.08)',  border: 'rgba(96,165,250,0.2)'  },
-  error:        { Icon: AlertCircle,  label: 'Erro',       color: '#f87171', bg: 'rgba(248,113,113,0.08)', border: 'rgba(248,113,113,0.2)' },
-  agent_status: { Icon: Bot,          label: 'Agente',     color: '#22d3ee', bg: 'rgba(34,211,238,0.08)',  border: 'rgba(34,211,238,0.2)'  },
-  plan:         { Icon: Brain,        label: 'Plano',      color: '#a78bfa', bg: 'rgba(167,139,250,0.08)', border: 'rgba(167,139,250,0.2)' },
+  thought:      { Icon: Brain,        label: 'Raciocínio',   color: '#818cf8', bg: 'rgba(99,102,241,0.08)', border: 'rgba(99,102,241,0.2)' },
+  action:       { Icon: Zap,          label: 'Acao',         color: '#fbbf24', bg: 'rgba(251,191,36,0.08)',  border: 'rgba(251,191,36,0.2)'  },
+  observation:  { Icon: Eye,          label: 'Resultado',    color: '#34d399', bg: 'rgba(52,211,153,0.08)',  border: 'rgba(52,211,153,0.2)'  },
+  step:         { Icon: Bot,          label: 'Passo',        color: '#60a5fa', bg: 'rgba(96,165,250,0.08)',  border: 'rgba(96,165,250,0.2)'  },
+  error:        { Icon: AlertCircle,  label: 'Erro',         color: '#f87171', bg: 'rgba(248,113,113,0.08)', border: 'rgba(248,113,113,0.2)' },
+  agent_status: { Icon: Bot,          label: 'Agente',       color: '#22d3ee', bg: 'rgba(34,211,238,0.08)',  border: 'rgba(34,211,238,0.2)'  },
+  plan:         { Icon: Brain,        label: 'Plano',        color: '#a78bfa', bg: 'rgba(167,139,250,0.08)', border: 'rgba(167,139,250,0.2)' },
+  correction:   { Icon: RefreshCw,    label: 'Auto-correcao',color: '#fb923c', bg: 'rgba(251,146,60,0.08)',  border: 'rgba(251,146,60,0.2)'  },
+  reflection:   { Icon: ShieldCheck,  label: 'Reflexao',     color: '#34d399', bg: 'rgba(52,211,153,0.08)',  border: 'rgba(52,211,153,0.2)'  },
 } as const
+
+function ScoreDots({ score }: { score: number }) {
+  return (
+    <span style={{ display: 'inline-flex', gap: '3px', marginLeft: '6px' }}>
+      {[1, 2, 3, 4, 5].map(i => (
+        <span
+          key={i}
+          style={{
+            width: '6px',
+            height: '6px',
+            borderRadius: '50%',
+            background: i <= score
+              ? score >= 4 ? '#34d399' : score >= 3 ? '#fbbf24' : '#f87171'
+              : 'rgba(255,255,255,0.12)',
+          }}
+        />
+      ))}
+    </span>
+  )
+}
 
 function StepRow({ step }: { step: AgentStep }) {
   const [open, setOpen] = useState(false)
-  const cfg = CFG[step.type] ?? CFG.step
-  const { Icon } = cfg
+
+  const baseCfg = CFG[step.type] ?? CFG.step
+  const isRejected = step.type === 'reflection' && step.accepted === false
+  const color  = isRejected ? '#f87171' : baseCfg.color
+  const bg     = isRejected ? 'rgba(248,113,113,0.08)' : baseCfg.bg
+  const border = isRejected ? 'rgba(248,113,113,0.2)'  : baseCfg.border
+  const Icon   = isRejected ? ShieldAlert : baseCfg.Icon
   const isLong = step.content.length > 100
 
   return (
     <div
       style={{
-        background: cfg.bg,
-        border: `1px solid ${cfg.border}`,
+        background: bg,
+        border: `1px solid ${border}`,
         borderRadius: '8px',
         overflow: 'hidden',
       }}
@@ -42,13 +69,16 @@ function StepRow({ step }: { step: AgentStep }) {
           background: 'transparent',
         }}
       >
-        <Icon size={12} style={{ color: cfg.color, flexShrink: 0 }} />
-        <span style={{ fontSize: '11.5px', fontWeight: 600, color: cfg.color, flexShrink: 0 }}>
-          {cfg.label}
-          {step.agent && ` · ${step.agent}`}
+        <Icon size={12} style={{ color, flexShrink: 0 }} />
+        <span style={{ fontSize: '11.5px', fontWeight: 600, color, flexShrink: 0 }}>
+          {baseCfg.label}
+          {step.agent && ` \xb7 ${step.agent}`}
+          {step.type === 'reflection' && step.score !== undefined && (
+            <ScoreDots score={step.score} />
+          )}
         </span>
         <span style={{ fontSize: '12px', color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {!isLong ? step.content : open ? '' : step.content.slice(0, 80) + '…'}
+          {!isLong ? step.content : open ? '' : step.content.slice(0, 80) + '...'}
         </span>
         {isLong && (
           <ChevronRight
