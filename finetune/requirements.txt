@@ -1,0 +1,14 @@
+# Dataset generation (roda no Windows)
+requests>=2.31
+
+# Training (roda no WSL2/Linux com GPU)
+# pip install unsloth
+# pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+unsloth
+torch>=2.1.0
+transformers>=4.36.0
+datasets>=2.16.0
+trl>=0.7.4
+peft>=0.7.0
+bitsandbytes>=0.41.0
+accelerate>=0.25.0

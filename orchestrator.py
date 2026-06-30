@@ -361,11 +361,90 @@ class OrchestratorAgent:
         return final
 
     # -----------------------------------------------------------------
+    # Modo conversa — bypass total (sem LLM de classificação)
+    # -----------------------------------------------------------------
+    _CONV_RE = re.compile(
+        r"^(oi|olá|ola|hey|e aí|e ai|bom dia|boa tarde|boa noite|"
+        r"tudo bem|tudo bom|como vai|como você está|como voce ta|como vc|"
+        r"obrigad|valeu|vlw|brigad|"
+        r"o que você acha|o que voce acha|qual (sua|tua) opini|"
+        r"me (explica|conta|fala|diz)|explique|"
+        r"quem é você|quem e voce|você pode|voce pode|pode me|"
+        r"o que (é |sao |são |significa)|qual (a diferença|é a diferença)|"
+        r"qual a diferença|diferença entre|compare |compara )",
+        re.IGNORECASE,
+    )
+    _TASK_KW = frozenset([
+        "pesquisa", "busca", "busque", "procure", "encontre", "acesse",
+        "abra", "execute", "rode", "crie", "gere", "faça", "escreva",
+        "salva", "salve", "lista", "leia", "analise", "calcule",
+        "cotação", "preço", "bitcoin", "dólar", "euro", "clima", "tempo",
+        "arquivo", "pasta", "código", "script", "terminal", "git",
+        "email", "slack", "notion", "planilha", "banco de dados", "sql",
+        "screenshot", "captura", "site", "url", "http",
+    ])
+
+    def _is_conversational(self, task: str) -> bool:
+        t = task.strip()
+        if len(t) > 200:
+            return False
+        tl = t.lower()
+        if any(kw in tl for kw in self._TASK_KW):
+            return False
+        return bool(self._CONV_RE.match(t))
+
+    def _run_conversational(self, task: str, step_callback=None) -> str:
+        from datetime import datetime
+        from user_profile import UserProfile
+
+        def emit(data):
+            if step_callback:
+                step_callback(data)
+
+        now     = datetime.now().strftime("%d/%m/%Y %H:%M, %A")
+        profile = UserProfile().get_system_context()
+        conv    = self.memory.get_context(task, session_id=self.session_id)
+
+        prompt = (
+            f"Você é uma IA pessoal com personalidade calorosa, curiosa e bem-humorada.\n"
+            f"Data/hora: {now}\n"
+            f"{profile}\n"
+            f"{conv}\n"
+            f"Responda de forma natural e humana. Seja breve se a mensagem for simples. "
+            f"Sem listas desnecessárias. Sem mencionar ferramentas.\n\n"
+            f"Usuário: {task}\n"
+            f"Você:"
+        )
+
+        resposta = ""
+
+        def on_token(tok):
+            nonlocal resposta
+            resposta += tok
+            emit({"type": "final_token", "content": tok})
+
+        emit({"type": "final_stream_start", "content": ""})
+        try:
+            self.llm.generate(prompt, on_token=on_token)
+        except Exception:
+            resposta = self.llm.generate(prompt)
+            emit({"type": "final_token", "content": resposta})
+
+        resposta = resposta.strip()
+        emit({"type": "final", "content": resposta})
+        emit({"type": "done", "content": ""})
+        log.info("MODO CONVERSA: %s → %s chars", task[:50], len(resposta))
+        return resposta
+
+    # -----------------------------------------------------------------
     # Entrada principal
     # -----------------------------------------------------------------
     def run(self, task: str, max_steps: int = 0, step_callback=None) -> str:
         if self._cancel.is_set():
             return "Cancelado."
+
+        if self._is_conversational(task):
+            return self._run_conversational(task, step_callback)
 
         if self._needs_collaboration(task):
             return self._run_collaborative(task, step_callback)

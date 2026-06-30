@@ -92,3 +92,7 @@ export async function setSpecialistModel(specialist: string, model: string): Pro
     body: JSON.stringify({ specialist, model }),
   })
 }
+
+export async function fetchTemplates(): Promise<{ templates: import('./templates').Template[] }> {
+  return req('/templates')
+}

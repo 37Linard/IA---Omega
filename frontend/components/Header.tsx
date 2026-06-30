@@ -1,16 +1,18 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Menu, Sun, Moon, User, Heart, Cpu, Database, Trash2, FolderOpen, RefreshCw, CheckCircle, XCircle, Loader2, Layers, GitGraph } from 'lucide-react'
+import { Menu, Sun, Moon, User, Heart, Cpu, Database, Trash2, FolderOpen, RefreshCw, CheckCircle, XCircle, Loader2, Layers, GitGraph, LayoutGrid } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
 import { fetchModels, setModel, fetchProfile, saveProfile, fetchRagDocs, ragIndexFolder, ragDeleteDoc, uploadFile, fetchMetrics, fetchSandboxStatus, fetchSpecialistModels, setSpecialistModel } from '@/lib/api'
 import { ThoughtTree } from './ThoughtTree'
 import type { UserProfile } from '@/lib/types'
+import { useRouter } from 'next/navigation'
 
 interface Props { onToggleSidebar: () => void }
 
 export function Header({ onToggleSidebar }: Props) {
   const { theme, toggleTheme, getActive } = useChatStore()
+  const router = useRouter()
   const conv = getActive()
   const [models, setModels] = useState<string[]>([])
   const [currentModel, setCurrentModel] = useState('')
@@ -100,6 +102,10 @@ export function Header({ onToggleSidebar }: Props) {
               </select>
             </div>
           )}
+
+          <HeaderBtn onClick={() => router.push('/ferramentas')} title="Ferramentas IA — 25 ferramentas especializadas">
+            <LayoutGrid size={15} />
+          </HeaderBtn>
 
           <HeaderBtn onClick={() => setNocOpen(true)} title="NOC — Arvore de Raciocinio">
             <GitGraph size={15} />

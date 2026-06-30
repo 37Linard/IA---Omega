@@ -23,8 +23,18 @@ export function ChatArea() {
   const autoScroll  = useRef(true)
 
   const { connect, sendTask, cancelTask, respondHitl, connected, running } = useAgentWebSocket()
+  const pendingTemplateTask    = useChatStore(s => s.pendingTemplateTask)
+  const setPendingTemplateTask = useChatStore(s => s.setPendingTemplateTask)
 
   useEffect(() => { connect() }, [connect])
+
+  useEffect(() => {
+    if (!connected || !pendingTemplateTask || running) return
+    const { task, templateId, templateInputs, displayLabel } = pendingTemplateTask
+    setPendingTemplateTask(null)
+    autoScroll.current = true
+    sendTask(task, templateId, templateInputs, displayLabel)
+  }, [connected, pendingTemplateTask, running, sendTask, setPendingTemplateTask])
 
   useEffect(() => {
     if (autoScroll.current) {

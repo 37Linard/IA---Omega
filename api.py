@@ -317,6 +317,21 @@ async def speak_text(body: dict):
     return Response(content=audio, media_type="audio/wav")
 
 
+@app.get("/templates")
+async def get_templates():
+    from templates import list_templates
+    return {"templates": list_templates()}
+
+
+@app.get("/templates/{template_id}")
+async def get_template(template_id: str):
+    from templates import get_template as _get
+    tmpl = _get(template_id)
+    if not tmpl:
+        raise HTTPException(status_code=404, detail="Template não encontrado")
+    return tmpl
+
+
 @app.get("/specialist-models")
 async def get_specialist_models():
     from orchestrator import list_specialist_models, SPECIALISTS
@@ -413,6 +428,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
 
             task = data.get("task", "").strip()
+            template_id     = data.get("template_id", "").strip()
+            template_inputs = data.get("template_inputs", {})
+
+            if template_id and isinstance(template_inputs, dict):
+                from templates import build_task as _build
+                built = _build(template_id, template_inputs)
+                if built:
+                    task = built
+
             if not task:
                 continue
 
