@@ -121,16 +121,26 @@ export function useAgentWebSocket() {
   const connectRef = useRef(connect)
   useEffect(() => { connectRef.current = connect }, [connect])
 
-  const sendTask = useCallback((task: string) => {
+  const sendTask = useCallback((
+    task: string,
+    templateId?: string,
+    templateInputs?: Record<string, string>,
+    displayLabel?: string,
+  ) => {
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) return false
 
-    storeRef.current.addUserMessage(task)
+    storeRef.current.addUserMessage(displayLabel ?? task)
     const msgId = storeRef.current.startAssistantMessage()
     currentMsgId.current = msgId
     setRunning(true)
 
-    ws.send(JSON.stringify({ task }))
+    const payload: Record<string, unknown> = { task }
+    if (templateId) {
+      payload.template_id     = templateId
+      payload.template_inputs = templateInputs ?? {}
+    }
+    ws.send(JSON.stringify(payload))
     return true
   }, [])
 

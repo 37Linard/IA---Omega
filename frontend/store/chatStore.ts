@@ -12,11 +12,19 @@ export interface HitlRequest {
   message: string
 }
 
+export interface PendingTemplateTask {
+  task: string
+  templateId: string
+  templateInputs: Record<string, string>
+  displayLabel: string
+}
+
 interface ChatState {
   conversations: Conversation[]
   activeId: string | null
   theme: 'dark' | 'light'
   hitlRequest: HitlRequest | null
+  pendingTemplateTask: PendingTemplateTask | null
 
   // Actions
   newConversation: () => string
@@ -34,6 +42,7 @@ interface ChatState {
   setError: (msgId: string, error: string) => void
   setFeedback: (msgId: string, feedback: 'up' | 'down') => void
   setHitlRequest: (req: HitlRequest | null) => void
+  setPendingTemplateTask: (task: PendingTemplateTask | null) => void
   toggleTheme: () => void
   getActive: () => Conversation | undefined
   renameConversation: (id: string, title: string) => void
@@ -46,6 +55,7 @@ export const useChatStore = create<ChatState>()(
       activeId: null,
       theme: 'dark',
       hitlRequest: null,
+      pendingTemplateTask: null,
 
       newConversation: () => {
         const id = generateId()
@@ -280,6 +290,8 @@ export const useChatStore = create<ChatState>()(
       },
 
       setHitlRequest: (req) => set({ hitlRequest: req }),
+
+      setPendingTemplateTask: (task) => set({ pendingTemplateTask: task }),
 
       toggleTheme: () => set(s => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
 
