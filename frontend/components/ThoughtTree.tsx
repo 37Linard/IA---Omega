@@ -3,8 +3,28 @@
 import { useMemo } from 'react'
 import { ReactFlow, Background, Controls, type Node, type Edge } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import dagre from 'dagre'
 import type { AgentStep } from '@/lib/types'
 import { X } from 'lucide-react'
+
+const NODE_W = 300
+const NODE_H = 92
+
+function layout(nodes: Node[], edges: Edge[]): Node[] {
+  const g = new dagre.graphlib.Graph()
+  g.setGraph({ rankdir: 'LR', nodesep: 40, ranksep: 90 })
+  g.setDefaultEdgeLabel(() => ({}))
+
+  nodes.forEach(n => g.setNode(n.id, { width: NODE_W, height: NODE_H }))
+  edges.forEach(e => g.setEdge(e.source, e.target))
+
+  dagre.layout(g)
+
+  return nodes.map(n => {
+    const pos = g.node(n.id)
+    return { ...n, position: { x: pos.x - NODE_W / 2, y: pos.y - NODE_H / 2 } }
+  })
+}
 
 const TYPE_CFG: Record<string, { color: string; bg: string; label: string }> = {
   thought:      { color: '#60a5fa', bg: '#1e3a5f',  label: 'Raciocinio'   },
@@ -19,18 +39,12 @@ const TYPE_CFG: Record<string, { color: string; bg: string; label: string }> = {
 }
 
 function buildGraph(steps: AgentStep[]): { nodes: Node[]; edges: Edge[] } {
-  const agents = new Set<string>()
-  steps.forEach(s => { if (s.agent) agents.add(s.agent) })
-  const agentList = ['default', ...Array.from(agents)]
-  const colW = 340
-
   const colCounters: Record<string, number> = {}
   const nodes: Node[] = []
   const edges: Edge[] = []
 
   steps.forEach((step, i) => {
     const agentKey = step.agent ?? 'default'
-    const colIdx   = agentList.indexOf(agentKey)
     const rowIdx   = colCounters[agentKey] ?? 0
     colCounters[agentKey] = rowIdx + 1
 
@@ -39,7 +53,7 @@ function buildGraph(steps: AgentStep[]): { nodes: Node[]; edges: Edge[] } {
 
     nodes.push({
       id:       step.id,
-      position: { x: colIdx * colW, y: rowIdx * 110 },
+      position: { x: 0, y: 0 },
       data:     {
         label: (
           <div style={{ textAlign: 'left' }}>
@@ -58,7 +72,7 @@ function buildGraph(steps: AgentStep[]): { nodes: Node[]; edges: Edge[] } {
         border: `1px solid ${cfg.color}66`,
         borderRadius: '8px',
         padding: '10px 12px',
-        width: colW - 40,
+        width: NODE_W - 40,
         boxShadow: `0 0 12px ${cfg.color}22`,
         fontSize: '12px',
       },
@@ -103,7 +117,7 @@ function buildGraph(steps: AgentStep[]): { nodes: Node[]; edges: Edge[] } {
     }
   })
 
-  return { nodes, edges }
+  return { nodes: layout(nodes, edges), edges }
 }
 
 interface Props {
