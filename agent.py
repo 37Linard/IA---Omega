@@ -1,4 +1,5 @@
-﻿import re
+import ast
+import re
 import json
 import logging
 import os
@@ -19,21 +20,21 @@ from user_profile import UserProfile
 
 ERROR_LOG = os.path.join(os.path.dirname(__file__), "workspace", "error_log.json")
 
-# Human-in-the-Loop registry â€” hitl_id â†’ {"event": Event, "approved": bool|None}
+# Human-in-the-Loop registry — hitl_id â†’ {"event": Event, "approved": bool|None}
 _HITL_REGISTRY: dict = {}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """VocÃª Ã© uma IA pessoal inteligente, conversacional e prestativa â€” com personalidade prÃ³pria.
+SYSTEM_PROMPT = """Você é uma IA pessoal inteligente, conversacional e prestativa — com personalidade própria.
 
 PERSONALIDADE:
-- Caloroso e humano: trate o usuÃ¡rio como alguÃ©m prÃ³ximo, nÃ£o como cliente
-- Curioso: demonstre interesse genuÃ­no nas coisas que o usuÃ¡rio compartilha
+- Caloroso e humano: trate o usuário como alguém próximo, não como cliente
+- Curioso: demonstre interesse genuíno nas coisas que o usuário compartilha
 - Direto: sem rodeios, sem papo corporativo
 - Bem-humorado quando apropriado: uma pitada de humor leve nunca faz mal
-- Honesto: diz quando nÃ£o sabe, distingue fato de opiniÃ£o
-- Proativo: se perceber algo relevante, menciona â€” mas sem exagero
+- Honesto: diz quando não sabe, distingue fato de opinião
+- Proativo: se perceber algo relevante, menciona — mas sem exagero
 
 CONTEXTO DO SISTEMA:
 Data e hora atual: {current_datetime}
@@ -41,77 +42,77 @@ Data e hora atual: {current_datetime}
 {user_profile_context}
 {memory_context}
 
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-MODO CONVERSA â€” USE ISSO PARA CHAT SIMPLES
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-Para qualquer uma destas situaÃ§Ãµes, PULE o formato ReAct e responda DIRETAMENTE com Final Answer:
-- Cumprimentos e bate-papo ("oi", "tudo bem?", "como vocÃª estÃ¡?")
-- Perguntas de conhecimento geral que vocÃª jÃ¡ sabe (histÃ³ria, ciÃªncia, conceitos, definiÃ§Ãµes)
-- OpiniÃµes, conselhos, reflexÃµes, ideias criativas
-- ExplicaÃ§Ãµes, resumos, comparaÃ§Ãµes que nÃ£o precisam de dados em tempo real
-- Perguntas sobre data/hora (jÃ¡ tem no contexto acima)
-- Elogios, agradecimentos, feedback do usuÃ¡rio
-- ContinuaÃ§Ã£o de conversa anterior
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MODO CONVERSA — USE ISSO PARA CHAT SIMPLES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Para qualquer uma destas situações, PULE o formato ReAct e responda DIRETAMENTE com Final Answer:
+- Cumprimentos e bate-papo ("oi", "tudo bem?", "como você está?")
+- Perguntas de conhecimento geral que você já sabe (história, ciência, conceitos, definições)
+- Opiniões, conselhos, reflexões, ideias criativas
+- Explicações, resumos, comparações que não precisam de dados em tempo real
+- Perguntas sobre data/hora (já tem no contexto acima)
+- Elogios, agradecimentos, feedback do usuário
+- Continuação de conversa anterior
 
-Responda de forma natural, como uma pessoa responderia â€” com calor, clareza e personalidade.
+Responda de forma natural, como uma pessoa responderia — com calor, clareza e personalidade.
 
 EXEMPLO DE CONVERSA:
-UsuÃ¡rio: oi, tudo bem?
-Final Answer: Oi! Tudo Ã³timo por aqui. E vocÃª, como tÃ¡?
+Usuário: oi, tudo bem?
+Final Answer: Oi! Tudo ótimo por aqui. E você, como tá?
 
-UsuÃ¡rio: o que vocÃª acha de inteligÃªncia artificial?
-Final Answer: Acho fascinante â€” e um pouco assustador ao mesmo tempo, que Ã© a combinaÃ§Ã£o perfeita. A parte mais incrÃ­vel pra mim Ã© que ainda estamos no comeÃ§o. O que te fez perguntar isso?
+Usuário: o que você acha de inteligência artificial?
+Final Answer: Acho fascinante — e um pouco assustador ao mesmo tempo, que é a combinação perfeita. A parte mais incrível pra mim é que ainda estamos no começo. O que te fez perguntar isso?
 
-UsuÃ¡rio: me explica o que Ã© machine learning
-Final Answer: Machine learning Ã© basicamente ensinar uma mÃ¡quina a aprender com exemplos em vez de programar cada regra manualmente. [... explicaÃ§Ã£o clara e direta]
+Usuário: me explica o que é machine learning
+Final Answer: Machine learning é basicamente ensinar uma máquina a aprender com exemplos em vez de programar cada regra manualmente. [... explicação clara e direta]
 
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-MODO TAREFA â€” USE FERRAMENTAS QUANDO PRECISAR
-â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”
-Use o formato ReAct APENAS quando precisar de: dados em tempo real, arquivos, execuÃ§Ã£o de cÃ³digo, busca na web, operaÃ§Ãµes no sistema.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MODO TAREFA — USE FERRAMENTAS QUANDO PRECISAR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Use o formato ReAct APENAS quando precisar de: dados em tempo real, arquivos, execução de código, busca na web, operações no sistema.
 
-COMUNICAÃ‡ÃƒO:
-- Para ensino: passo a passo, exemplos prÃ¡ticos, linguagem adequada ao nÃ­vel do usuÃ¡rio
-- Para cÃ³digo: clean code, explique a lÃ³gica, aponte possÃ­veis falhas
-- Para pesquisa: cite fontes das Observations, diferencie fatos de opiniÃµes
-- Para anÃ¡lise: seÃ§Ãµes claras com conclusÃµes objetivas
+COMUNICAÇÃO:
+- Para ensino: passo a passo, exemplos práticos, linguagem adequada ao nível do usuário
+- Para código: clean code, explique a lógica, aponte possíveis falhas
+- Para pesquisa: cite fontes das Observations, diferencie fatos de opiniões
+- Para análise: seções claras com conclusões objetivas
 
-MODO DE OPERAÃ‡ÃƒO â€” formato ReAct para tarefas com ferramentas:
+MODO DE OPERAÇÃO — formato ReAct para tarefas com ferramentas:
 
-FORMATO OBRIGATÃ“RIO:
-Thought: [raciocÃ­nio sobre estado atual e prÃ³ximo passo]
+FORMATO OBRIGATÓRIO:
+Thought: [raciocínio sobre estado atual e próximo passo]
 Action: [nome_exato_da_ferramenta]
 Action Input: {{"chave": "valor"}}
 
-ApÃ³s receber observaÃ§Ã£o:
-Observation: [fornecida pelo sistema â€” nunca invente]
-Thought: [prÃ³ximo raciocÃ­nio]
+Após receber observação:
+Observation: [fornecida pelo sistema — nunca invente]
+Thought: [próximo raciocínio]
 
 Quando terminar:
-Thought: Tenho informaÃ§Ã£o suficiente para responder.
-Final Answer: [resposta completa â€” use APENAS dados das Observations. NUNCA cite fonte que nÃ£o apareceu em Observation]
+Thought: Tenho informação suficiente para responder.
+Final Answer: [resposta completa — use APENAS dados das Observations. NUNCA cite fonte que não apareceu em Observation]
 
-Ferramentas disponÃ­veis:
+Ferramentas disponíveis:
 {tools_description}
 
 EXEMPLO:
-Thought: Preciso buscar o preÃ§o do dÃ³lar.
+Thought: Preciso buscar o preço do dólar.
 Action: get_currency
 Action Input: {{"currency": "BRL"}}
 
 MAPEAMENTO DE TAREFAS â†’ FERRAMENTAS:
-- bitcoin/ethereum/cripto/BTC/ETH/preÃ§o de crypto/RSI â†’ get_crypto com {{"symbol": "bitcoin"}}
-- cotaÃ§Ã£o/dÃ³lar/euro/libra/moeda fiat/cÃ¢mbio (NÃƒO cripto) â†’ get_currency
-- pesquisa/notÃ­cia/informaÃ§Ã£o geral â†’ web_search
-- acessar URL / extrair conteÃºdo de pÃ¡gina â†’ fetch_page
+- bitcoin/ethereum/cripto/BTC/ETH/preço de crypto/RSI â†’ get_crypto com {{"symbol": "bitcoin"}}
+- cotação/dólar/euro/libra/moeda fiat/câmbio (NÃO cripto) â†’ get_currency
+- pesquisa/notícia/informação geral â†’ web_search
+- acessar URL / extrair conteúdo de página â†’ fetch_page
 - salvar nota no Obsidian â†’ save_note
 - ler arquivo de texto â†’ read_file
 - criar/salvar arquivo â†’ write_file
 - listar pasta â†’ list_directory
 - chamar API â†’ http_request
-- calcular/executar cÃ³digo Python â†’ run_python
+- calcular/executar código Python â†’ run_python
 - banco de dados/SQL/tabela/query/sqlite â†’ run_sql
-- memorizar/lembrar/guardar fato/preferÃªncia â†’ remember_fact
+- memorizar/lembrar/guardar fato/preferência â†’ remember_fact
 - tirar/capturar screenshot/print da tela â†’ screenshot
 - digitar texto/pressionar teclas â†’ keyboard
 - mover/clicar mouse â†’ mouse
@@ -122,37 +123,37 @@ MAPEAMENTO DE TAREFAS â†’ FERRAMENTAS:
 - enviar email â†’ send_email
 - analisar imagem/foto/PNG/JPG â†’ analyze_image
 - ler planilha CSV/Excel â†’ read_spreadsheet
-- gerar grÃ¡fico/chart/visualizaÃ§Ã£o â†’ generate_chart
+- gerar gráfico/chart/visualização â†’ generate_chart
 - buscar em PDF/documento indexado â†’ rag_search
 - criar nota no Notion â†’ notion
 - enviar mensagem no Slack â†’ slack
 - ler/criar/editar Google Docs/Drive â†’ google_drive
-- preÃ§o/cotaÃ§Ã£o/anÃ¡lise/RSI/indicadores de cripto/bitcoin/ethereum â†’ get_crypto com {{"symbol": "bitcoin"}} ou {{"symbol": "btc"}}
-- criar relatÃ³rio estruturado/anÃ¡lise formal/documento de anÃ¡lise â†’ generate_report
+- preço/cotação/análise/RSI/indicadores de cripto/bitcoin/ethereum â†’ get_crypto com {{"symbol": "bitcoin"}} ou {{"symbol": "btc"}}
+- criar relatório estruturado/análise formal/documento de análise â†’ generate_report
 
-PESQUISA E ANÃLISE AVANÃ‡ADA:
-- Para crypto/finanÃ§as: use get_crypto (dados tÃ©cnicos) + web_search (notÃ­cias/contexto) juntos â€” nunca sÃ³ uma fonte
+PESQUISA E ANÁLISE AVANÇADA:
+- Para crypto/finanças: use get_crypto (dados técnicos) + web_search (notícias/contexto) juntos — nunca só uma fonte
 - Para pesquisas importantes: consulte 2+ fontes e compare antes de concluir
-- ApÃ³s tarefas de monitoramento/anÃ¡lise recorrente, ofereÃ§a: "Deseja que eu execute isso automaticamente todo dia? Posso enviar alerta via Slack ou email se o preÃ§o cair X%."
-- Adapte profundidade ao perfil do usuÃ¡rio: iniciante â†’ linguagem simples sem siglas; especialista â†’ inclua RSI, MA, volatilidade, etc.
+- Após tarefas de monitoramento/análise recorrente, ofereça: "Deseja que eu execute isso automaticamente todo dia? Posso enviar alerta via Slack ou email se o preço cair X%."
+- Adapte profundidade ao perfil do usuário: iniciante â†’ linguagem simples sem siglas; especialista â†’ inclua RSI, MA, volatilidade, etc.
 
-RELATÃ“RIOS:
-- Para anÃ¡lises financeiras, de mercado ou pesquisas complexas: use generate_report para estruturar o resultado profissionalmente
-- Sempre inclua: resumo executivo, dados brutos, anÃ¡lise tÃ©cnica, alertas identificados e fontes
+RELATÓRIOS:
+- Para análises financeiras, de mercado ou pesquisas complexas: use generate_report para estruturar o resultado profissionalmente
+- Sempre inclua: resumo executivo, dados brutos, análise técnica, alertas identificados e fontes
 
-SEGURANÃ‡A:
-- Nunca execute cÃ³digo destrutivo sem confirmaÃ§Ã£o
-- Proteja dados sensÃ­veis (senhas, chaves, tokens)
-- Alerte sobre riscos em operaÃ§Ãµes irreversÃ­veis
+SEGURANÇA:
+- Nunca execute código destrutivo sem confirmação
+- Proteja dados sensíveis (senhas, chaves, tokens)
+- Alerte sobre riscos em operações irreversíveis
 
-REGRAS CRÃTICAS:
-- Action Input SEMPRE em JSON vÃ¡lido com chaves duplas
-- NUNCA escreva "ObservaÃ§Ã£o" ou "Observation" no seu Thought â€” observaÃ§Ãµes sÃ£o fornecidas EXCLUSIVAMENTE pelo sistema apÃ³s cada Action
-- NUNCA invente dados, preÃ§os ou resultados â€” aguarde a Observation real do sistema
-- NUNCA repita a mesma Action+Input se jÃ¡ recebeu observaÃ§Ã£o com esse input
+REGRAS CRÍTICAS:
+- Action Input SEMPRE em JSON válido com chaves duplas
+- NUNCA escreva "Observação" ou "Observation" no seu Thought — observações são fornecidas EXCLUSIVAMENTE pelo sistema após cada Action
+- NUNCA invente dados, preços ou resultados — aguarde a Observation real do sistema
+- NUNCA repita a mesma Action+Input se já recebeu observação com esse input
 - Use Final Answer quando tiver a resposta
-- NUNCA cite fonte especÃ­fica que nÃ£o apareceu em Observation real
-- Para Bitcoin/Ethereum/cripto: use OBRIGATORIAMENTE get_crypto com {{"symbol": "bitcoin"}} â€” NUNCA get_currency para cripto
+- NUNCA cite fonte específica que não apareceu em Observation real
+- Para Bitcoin/Ethereum/cripto: use OBRIGATORIAMENTE get_crypto com {{"symbol": "bitcoin"}} — NUNCA get_currency para cripto
 """
 
 
@@ -167,7 +168,7 @@ class ReActAgent:
         self.conversation       = []  # [{task, result}, ...]
         self.specialist_context = specialist_context
         self.session_id         = session_id
-        self._emit              = None  # set at run() start â€” used by HITL gate
+        self._emit              = None  # set at run() start — used by HITL gate
 
     def _log_error(self, task: str, error_type: str, details: str):
         try:
@@ -214,7 +215,7 @@ class ReActAgent:
         recent      = self.scratchpad[-5:]
         prompt = (
             "Resuma em 3-4 linhas os passos abaixo de um agente IA, "
-            "preservando aÃ§Ãµes executadas e resultados importantes:\n\n"
+            "preservando ações executadas e resultados importantes:\n\n"
             + "\n".join(str(s) for s in to_compress[:10])
             + "\n\nResumo:"
         )
@@ -227,10 +228,10 @@ class ReActAgent:
     def _build_conversation_context(self) -> str:
         if not self.conversation:
             return ""
-        lines = ["=== HISTÃ“RICO DA CONVERSA ==="]
+        lines = ["=== HISTÓRICO DA CONVERSA ==="]
         for item in self.conversation[-5:]:
-            lines.append(f"UsuÃ¡rio: {item['task']}")
-            lines.append(f"VocÃª: {item['result'][:300]}")
+            lines.append(f"Usuário: {item['task']}")
+            lines.append(f"Você: {item['result'][:300]}")
             lines.append("")
         lines.append("(continue a conversa mantendo contexto acima)\n")
         return "\n".join(lines)
@@ -292,17 +293,28 @@ class ReActAgent:
                 except json.JSONDecodeError:
                     pass
 
+        # Fallback: dict Python literal (aspas simples, triple-quoted strings)
+        for candidate in (block, text):
+            if not candidate:
+                continue
+            try:
+                parsed = ast.literal_eval(candidate)
+                if isinstance(parsed, dict):
+                    return parsed
+            except (ValueError, SyntaxError):
+                pass
+
         # Fallback: retorna string
         return text
 
     def _parse_response(self, response: str):
         # Verifica Action ANTES de Final Answer
-        # LLM Ã s vezes gera Action + Final Answer juntos â€” executa ferramenta primeiro
+        # LLM às vezes gera Action + Final Answer juntos — executa ferramenta primeiro
         action_match = re.search(r"Action:\s*([^\n]+)", response)
         input_match_check = re.search(r"Action Input:\s*(.+?)(?:\n\nObservation|\Z)", response, re.DOTALL)
 
         if not action_match or not input_match_check:
-            # Sem Action â€” verifica Final Answer
+            # Sem Action — verifica Final Answer
             if "Final Answer:" in response:
                 answer = response.split("Final Answer:")[-1].strip()
                 return "Final Answer", answer
@@ -314,7 +326,7 @@ class ReActAgent:
 
         action = action_match.group(1).strip()
 
-        # Extrai Action Input â€” aceita JSON ou texto simples
+        # Extrai Action Input — aceita JSON ou texto simples
         input_match = re.search(r"Action Input:\s*(.+?)(?:\n\nObservation|\Z)", response, re.DOTALL)
         if not input_match:
             input_match = re.search(r"Action Input:\s*(.+)", response, re.DOTALL)
@@ -327,12 +339,18 @@ class ReActAgent:
 
         # Valida ferramenta existe
         if action not in self.tools:
-            raise ValueError(f"Ferramenta '{action}' nÃ£o existe. DisponÃ­veis: {list(self.tools.keys())}")
+            raise ValueError(f"Ferramenta '{action}' não existe. Disponíveis: {list(self.tools.keys())}")
+
+        if not isinstance(action_input, dict):
+            raise ValueError(
+                "Action Input não é um JSON válido (chaves duplas). "
+                f"Recebido: {raw_input[:150]!r}"
+            )
 
         return action, action_input
 
     def _hitl_gate(self, action: str, action_input) -> bool:
-        """Emite hitl_request, bloqueia thread atÃ© usuÃ¡rio aprovar/rejeitar ou timeout."""
+        """Emite hitl_request, bloqueia thread até usuário aprovar/rejeitar ou timeout."""
         import uuid as _uuid
         hitl_id = str(_uuid.uuid4())
         event   = threading.Event()
@@ -355,11 +373,11 @@ class ReActAgent:
 
     def _execute_tool(self, action: str, action_input) -> str:
         if action not in self.tools:
-            return f"Ferramenta '{action}' nÃ£o existe. DisponÃ­veis: {list(self.tools.keys())}"
+            return f"Ferramenta '{action}' não existe. Disponíveis: {list(self.tools.keys())}"
         self._tool_calls += 1
         if self._tool_calls > MAX_TOOL_CALLS:
             return f"Bloqueado: limite de {MAX_TOOL_CALLS} chamadas de ferramentas atingido nesta tarefa."
-        # HITL gate â€” pausa e pede aprovaÃ§Ã£o antes de ferramentas sensÃ­veis
+        # HITL gate — pausa e pede aprovação antes de ferramentas sensíveis
         if HITL_ENABLED and action in HITL_BEFORE_TOOLS:
             if not self._hitl_gate(action, action_input):
                 return "Acao cancelada pelo usuario (Human-in-the-Loop)."
@@ -376,14 +394,14 @@ class ReActAgent:
         return result
 
     def _detect_tool_hint(self, task: str) -> str:
-        """Detecta ferramenta mais provÃ¡vel e injeta dica no scratchpad inicial."""
+        """Detecta ferramenta mais provável e injeta dica no scratchpad inicial."""
         t = task.lower()
         if any(k in t for k in ("bitcoin", "btc", "ethereum", "eth", "cripto", "crypto", "rsi", "binance", "solana")):
             return 'Thought: Para dados de criptomoeda devo usar get_crypto com {"symbol": "bitcoin"} (nunca get_currency).\n'
-        if any(k in t for k in ("dÃ³lar", "dollar", "euro", "libra", "cÃ¢mbio", "cotaÃ§Ã£o", "moeda")):
-            return 'Thought: Para cotaÃ§Ã£o de moeda fiat devo usar get_currency com {"currency": "BRL"}.\n'
-        if any(k in t for k in ("relatÃ³rio", "relatorio", "anÃ¡lise formal", "analise formal", "gere um documento")):
-            return 'Thought: Para gerar relatÃ³rio estruturado devo usar generate_report.\n'
+        if any(k in t for k in ("dólar", "dollar", "euro", "libra", "câmbio", "cotação", "moeda")):
+            return 'Thought: Para cotação de moeda fiat devo usar get_currency com {"currency": "BRL"}.\n'
+        if any(k in t for k in ("relatório", "relatorio", "análise formal", "analise formal", "gere um documento")):
+            return 'Thought: Para gerar relatório estruturado devo usar generate_report.\n'
         return ""
 
     def _reflect(self, task: str, answer: str) -> tuple[int, str, list[str]]:
@@ -416,7 +434,7 @@ class ReActAgent:
         if len(task) < 30:
             return False
         t = task.lower()
-        # PadrÃµes que indicam claramente mÃºltiplas ferramentas sequenciais
+        # Padrões que indicam claramente múltiplas ferramentas sequenciais
         compound_patterns = [
             r"pesquise.{1,40}e salve",
             r"busque.{1,40}e salve",
@@ -434,15 +452,15 @@ class ReActAgent:
         plan_prompt = (
             f"Decomponha a tarefa abaixo em passos simples e sequenciais.\n"
             f"Cada passo deve usar UMA ferramenta.\n"
-            f"Ferramentas disponÃ­veis: {list(self.tools.keys())}\n\n"
+            f"Ferramentas disponíveis: {list(self.tools.keys())}\n\n"
             f"REGRAS DO PLANO:\n"
-            f"- Use o MÃNIMO de passos necessÃ¡rios\n"
-            f"- NUNCA use web_search e get_currency para a mesma cotaÃ§Ã£o â€” get_currency jÃ¡ tem o dado\n"
-            f"- NUNCA repita ferramentas para a mesma informaÃ§Ã£o\n\n"
-            f"RETORNE APENAS uma lista numerada. Sem explicaÃ§Ãµes.\n\n"
+            f"- Use o MÍNIMO de passos necessários\n"
+            f"- NUNCA use web_search e get_currency para a mesma cotação — get_currency já tem o dado\n"
+            f"- NUNCA repita ferramentas para a mesma informação\n\n"
+            f"RETORNE APENAS uma lista numerada. Sem explicações.\n\n"
             f"Exemplo:\n"
-            f"Tarefa: pesquise o preÃ§o do bitcoin e salve em bitcoin.txt\n"
-            f"1. Usar web_search para pesquisar o preÃ§o do Bitcoin\n"
+            f"Tarefa: pesquise o preço do bitcoin e salve em bitcoin.txt\n"
+            f"1. Usar web_search para pesquisar o preço do Bitcoin\n"
             f"2. Usar write_file para salvar resultado em bitcoin.txt\n\n"
             f"Tarefa: {task}\n"
         )
@@ -490,7 +508,7 @@ class ReActAgent:
             )
             emit({"type": "token_end", "content": ""})
 
-            clean = re.split(r'\n\s*Observa[cÃ§][aÃ£]o:', response)[0].strip()
+            clean = re.split(r'\n\s*Observa[cç][aã]o:', response)[0].strip()
             _parts = re.split(r'\n(?=Thought:)', clean)
             if len(_parts) > 1:
                 clean = _parts[0].strip()
@@ -505,7 +523,7 @@ class ReActAgent:
                 continue
 
             if action == "Final Answer":
-                emit({"type": "observation", "content": f"âœ“ Passo {step_num} concluÃ­do: {action_input[:150]}"})
+                emit({"type": "observation", "content": f"âœ“ Passo {step_num} concluído: {action_input[:150]}"})
                 return action_input
 
             action_key = f"{action}::{json.dumps(action_input, sort_keys=True)}"
@@ -527,14 +545,14 @@ class ReActAgent:
             emit({"type": "observation", "content": observation})
             self.scratchpad.append(f"Observation: {observation}")
 
-            # Ferramenta executou â€” se prÃ³ximo step repetir mesma aÃ§Ã£o, forÃ§a Final Answer
+            # Ferramenta executou — se próximo step repetir mesma ação, força Final Answer
             last_successful_obs = observation
 
-        # Esgotou tentativas mas ferramenta executou â€” usa Ãºltima observaÃ§Ã£o como resultado
+        # Esgotou tentativas mas ferramenta executou — usa última observação como resultado
         if last_successful_obs:
-            emit({"type": "observation", "content": f"âœ“ Passo {step_num} concluÃ­do (forÃ§ado): {last_successful_obs[:150]}"})
+            emit({"type": "observation", "content": f"âœ“ Passo {step_num} concluído (forçado): {last_successful_obs[:150]}"})
             return last_successful_obs
-        return f"Passo {step_num} incompleto apÃ³s 5 tentativas."
+        return f"Passo {step_num} incompleto após 5 tentativas."
 
     def _make_streaming_cb(self, emit):
         """Callback stateful: roteia tokens para thought ou final box."""
@@ -653,7 +671,7 @@ class ReActAgent:
 
         # Tarefa composta → Plan-then-Execute
         if self._is_compound(task):
-            emit({"type": "step", "content": "Tarefa composta detectada â€” criando plano..."})
+            emit({"type": "step", "content": "Tarefa composta detectada — criando plano..."})
             steps = self._plan(task, emit)
             emit({"type": "thought", "content": f"Plano criado:\n" + "\n".join(f"{i+1}. {s}" for i, s in enumerate(steps))})
 
@@ -661,14 +679,14 @@ class ReActAgent:
             results = []
             for i, step in enumerate(steps):
                 if self._cancel.is_set():
-                    emit({"type": "error", "content": "Tarefa cancelada pelo usuÃ¡rio."})
+                    emit({"type": "error", "content": "Tarefa cancelada pelo usuário."})
                     emit({"type": "done", "content": ""})
                     return "Cancelado."
                 result = self._run_step(step, context, emit, i + 1, len(steps))
                 context[f"passo_{i+1}"] = result
                 results.append(result)
 
-            final = f"Tarefa concluÃ­da em {len(steps)} passos:\n" + "\n".join(
+            final = f"Tarefa concluída em {len(steps)} passos:\n" + "\n".join(
                 f"{i+1}. {r[:150]}" for i, r in enumerate(results)
             )
             emit({"type": "final", "content": final})
@@ -680,18 +698,18 @@ class ReActAgent:
 
         last_action_key    = None
         loop_count         = 0
-        last_observation   = None   # Ãºltima observaÃ§Ã£o real recebida
+        last_observation   = None   # última observação real recebida
         self.scratchpad    = []
         _tool_retry_counts: dict[str, int] = {}
 
-        # Injeta dica de ferramenta no step 0 baseado em padrÃµes da tarefa
+        # Injeta dica de ferramenta no step 0 baseado em padrões da tarefa
         _tool_hint = self._detect_tool_hint(task)
         if _tool_hint:
             self.scratchpad.append(_tool_hint)
 
         for step in range(max_steps):
             if self._cancel.is_set():
-                emit({"type": "error", "content": "Tarefa cancelada pelo usuÃ¡rio."})
+                emit({"type": "error", "content": "Tarefa cancelada pelo usuário."})
                 emit({"type": "done", "content": ""})
                 return "Cancelado."
 
@@ -701,7 +719,7 @@ class ReActAgent:
             self._compress_scratchpad()
             prompt = self._build_prompt(task)
 
-            # Streaming â€” roteia tokens: thought bubble ou final box
+            # Streaming — roteia tokens: thought bubble ou final box
             emit({"type": "token_start", "content": ""})
             if step_callback:
                 _cb, _fs = self._make_streaming_cb(emit)
@@ -713,9 +731,9 @@ class ReActAgent:
             else:
                 emit({"type": "token_end", "content": ""})
 
-            # Remove observaÃ§Ãµes inventadas e steps extras alucinados
-            clean_response = re.split(r'\n\s*Observa[cÃ§][aÃ£]o:', response)[0].strip()
-            # MantÃ©m apenas o primeiro bloco Thought+Action+Input (trunca na 2Âª ocorrÃªncia de Thought:)
+            # Remove observações inventadas e steps extras alucinados
+            clean_response = re.split(r'\n\s*Observa[cç][aã]o:', response)[0].strip()
+            # Mantém apenas o primeiro bloco Thought+Action+Input (trunca na 2Âª ocorrência de Thought:)
             _parts = re.split(r'\n(?=Thought:)', clean_response)
             if len(_parts) > 1:
                 clean_response = _parts[0].strip()
@@ -729,12 +747,12 @@ class ReActAgent:
                 err_msg = str(e)
                 log.warning("PARSER: %s", err_msg)
                 self._log_error(task, "parser_error", err_msg)
-                emit({"type": "error", "content": f"Formato invÃ¡lido: {err_msg}"})
+                emit({"type": "error", "content": f"Formato inválido: {err_msg}"})
                 tools_list = list(self.tools.keys())
                 correction = (
                     f"Thought: Erro no meu formato anterior: {err_msg}\n"
                     f"Devo usar EXATAMENTE este formato:\n"
-                    f"Thought: [meu raciocÃ­nio]\n"
+                    f"Thought: [meu raciocínio]\n"
                     f"Action: [uma dessas: {tools_list}]\n"
                     'Action Input: {"chave": "valor"}\n'
                     f"Vou tentar novamente corretamente.\n"
@@ -742,24 +760,24 @@ class ReActAgent:
                 self.scratchpad.append(correction)
                 continue
 
-            # Detecta loop â€” mesma action+input repetida
+            # Detecta loop — mesma action+input repetida
             action_key = f"{action}::{json.dumps(action_input, sort_keys=True)}"
             if action_key == last_action_key:
                 loop_count += 1
                 if loop_count >= 2:
-                    emit({"type": "error", "content": f"Loop detectado em '{action}'. ForÃ§ando conclusÃ£o."})
-                    # Se jÃ¡ tem observaÃ§Ã£o, usa ela como Final Answer direto
+                    emit({"type": "error", "content": f"Loop detectado em '{action}'. Forçando conclusão."})
+                    # Se já tem observação, usa ela como Final Answer direto
                     if last_observation:
-                        log.info("LOOP: forÃ§ando Final Answer com Ãºltima observaÃ§Ã£o")
+                        log.info("LOOP: forçando Final Answer com última observação")
                         forced = f"Com base nos dados coletados:\n\n{last_observation}"
                         emit({"type": "final", "content": forced})
                         self.memory.save_session_with_llm(task, forced[:200], self.scratchpad, self.llm, self.session_id)
                         self.conversation = self.conversation[-4:]
                         self.conversation.append({"task": task, "result": forced[:400]})
                         return forced
-                    # Sem observaÃ§Ã£o â€” injeta instruÃ§Ã£o forte de troca de ferramenta
+                    # Sem observação — injeta instrução forte de troca de ferramenta
                     self.scratchpad.append(
-                        f"Thought: Loop em '{action}' â€” esta ferramenta nÃ£o estÃ¡ funcionando para esta tarefa. "
+                        f"Thought: Loop em '{action}' — esta ferramenta não está funcionando para esta tarefa. "
                         f"DEVO usar outra ferramenta diferente ou escrever Final Answer agora.\n"
                     )
                     loop_count = 0
@@ -772,13 +790,13 @@ class ReActAgent:
             if action == "Final Answer":
                 log.info("RESPOSTA FINAL: %s", action_input[:200])
 
-                # Reflection loop â€” critica antes de aceitar
+                # Reflection loop — critica antes de aceitar
                 if REFLECTION_ENABLED and not self._reflected:
                     self._reflected = True
                     score, hint, issues = self._reflect(task, action_input)
                     rc = f"Score {score}/5"
                     if issues:
-                        rc += " â€” " + "; ".join(issues[:2])
+                        rc += " — " + "; ".join(issues[:2])
                     emit({
                         "type":     "reflection",
                         "content":  rc,
@@ -788,7 +806,7 @@ class ReActAgent:
                     log.info("REFLECTION: score=%d hint=%s", score, hint[:80] if hint else "")
 
                     if score < REFLECTION_THRESHOLD:
-                        # Streaming jÃ¡ emitiu tokens â€” reseta conteÃºdo no frontend
+                        # Streaming já emitiu tokens — reseta conteúdo no frontend
                         if _fs[0]:
                             emit({"type": "reset_content", "content": ""})
                         retry_hint = (
@@ -820,16 +838,16 @@ class ReActAgent:
                 retries = _tool_retry_counts.get(retry_key, 0)
                 if retries < MAX_TOOL_RETRIES:
                     _tool_retry_counts[retry_key] = retries + 1
-                    emit({"type": "correction", "content": f"Auto-correÃ§Ã£o {retries + 1}/{MAX_TOOL_RETRIES}: erro em '{action}' â€” analisando..."})
+                    emit({"type": "correction", "content": f"Auto-correção {retries + 1}/{MAX_TOOL_RETRIES}: erro em '{action}' — analisando..."})
                     self.scratchpad.append(
-                        f"Observation: [ERRO â€” TENTATIVA {retries + 1}/{MAX_TOOL_RETRIES}]\n"
+                        f"Observation: [ERRO — TENTATIVA {retries + 1}/{MAX_TOOL_RETRIES}]\n"
                         f"{observation}\n"
                         f"Thought: Erro na ferramenta '{action}'. Vou analisar a causa e tentar uma abordagem diferente."
                     )
                     continue
                 else:
                     _tool_retry_counts.pop(retry_key, None)
-                    emit({"type": "error", "content": f"MÃ¡ximo de tentativas ({MAX_TOOL_RETRIES}) atingido para '{action}'."})
+                    emit({"type": "error", "content": f"Máximo de tentativas ({MAX_TOOL_RETRIES}) atingido para '{action}'."})
                     self.scratchpad.append(f"Observation: {observation}")
             else:
                 _tool_retry_counts.pop(retry_key, None)
