@@ -2,7 +2,7 @@
 
 > Assistente de IA autônomo rodando **100% na sua máquina** — sem APIs externas, sem custos por token, sem dados saindo do seu PC.
 
-Usa Ollama para inferência local, arquitetura ReAct para raciocínio passo a passo, e 27 ferramentas reais para executar tarefas complexas.
+Usa Ollama para inferência local, arquitetura ReAct para raciocínio passo a passo, e 28 ferramentas reais para executar tarefas complexas.
 
 **v1.0** — Tiered Memory · Reflection Loop · Multi-model por especialista · Docker Sandbox · Visual Browser · NOC Dashboard + HITL
 
@@ -84,7 +84,7 @@ SCHEDULED_TASKS = [
 
 ---
 
-## 🛠️ 27 Ferramentas
+## 🛠️ 28 Ferramentas
 
 O agente decide sozinho qual usar baseado na tarefa.
 
@@ -94,7 +94,7 @@ O agente decide sozinho qual usar baseado na tarefa.
 | **Arquivos** | `read_file`, `write_file`, `list_directory` |
 | **Código** | `run_python` (Docker sandbox), `run_sql`, `terminal` (sandboxed), `git` |
 | **Dados** | `read_spreadsheet` (CSV/Excel), `generate_chart` (matplotlib), `rag_search` |
-| **Visão** | `analyze_image` (LLaVA multimodal) |
+| **Visão** | `analyze_image` (LLaVA multimodal), `generate_image` (Stable Diffusion local — sd-turbo) |
 | **Memória** | `remember_fact`, `save_note` (Obsidian) |
 | **Computer Use** | `screenshot`, `keyboard`, `mouse`, `clipboard` |
 | **Integrações** | `email`, `notion`, `slack`, `google_drive`, `get_currency` |
@@ -223,6 +223,10 @@ SPECIALIST_MODELS = {
     # "codigo": "qwen2.5-coder:7b",
 }
 
+# Geração de imagem (generate_image) — requer pip install torch diffusers accelerate
+IMAGE_GEN_MODEL   = "stabilityai/sd-turbo"
+IMAGE_GEN_DEVICE  = "auto"          # "auto" | "cuda" | "cpu"
+
 # Autenticação (deixe vazio para desativar)
 AUTH_PASSWORD     = ""
 
@@ -284,7 +288,7 @@ Browser ──WebSocket──► FastAPI (api.py)
                        [auto-correção]
                             │
                      tool_loader.py
-                     27 tools (plugins)
+                     28 tools (plugins)
                             │
                memory.py  rag.py  user_profile.py
                ChromaDB   BM25    audit.db
@@ -314,7 +318,7 @@ agente-ia-local/
 ├── requirements.txt
 ├── iniciar.bat          # Backend (porta 8000)
 ├── iniciar_frontend.bat # Backend + Next.js (porta 3000)
-├── tools/               # 27 ferramentas — adicione arquivos aqui
+├── tools/               # 28 ferramentas — adicione arquivos aqui
 └── frontend/            # Next.js 16 + React 19 + TypeScript + Tailwind v4
 ```
 
@@ -348,7 +352,14 @@ google-auth-httplib2
 matplotlib
 pandas
 openpyxl
+
+# generate_image_tool (Stable Diffusion local) — opcional, downloads grandes
+torch
+diffusers
+accelerate
 ```
+
+> `torch`/`diffusers`/`accelerate` só são necessários pra `generate_image`. No Windows com GPU, instale o `torch` com suporte CUDA **antes** de rodar `pip install -r requirements.txt` ([pytorch.org/get-started/locally](https://pytorch.org/get-started/locally)) — senão cai pra CPU automaticamente.
 
 ---
 
@@ -364,8 +375,8 @@ openpyxl
 - [x] Human-in-the-Loop (pausa agente, usuário aprova/rejeita)
 
 ### v1.1 — Próxima
-- [ ] Geração de imagens — Stable Diffusion via API local
-- [ ] Exibir imagens geradas inline no chat (além de screenshots)
+- [x] Geração de imagens — `generate_image` (Stable Diffusion local, sd-turbo, GPU com fallback CPU) — código pronto, imagem sai como markdown inline (mesmo padrão do `browser_tool`)
+- [ ] Exibir imagens geradas inline no chat (além de screenshots) — já funciona pra `generate_image`/`browser`; falta pro `generate_chart`
 - [ ] Export de conversa para Markdown/Obsidian
 - [ ] Auto-detect nível técnico do usuário por padrões de conversa
 
