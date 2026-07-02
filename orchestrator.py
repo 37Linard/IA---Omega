@@ -132,6 +132,43 @@ SPECIALIST_PROMPTS = {
 
 MAX_PARALLEL = 3  # max especialistas simultâneos
 
+_SEQ_WORDS = (" e ", " depois ", " então ", " em seguida ", " também ")
+
+
+def domain_hits(task: str) -> set[str]:
+    """Especialistas cujo dominio aparece na tarefa.
+    Usa o radical (5 chars) da ultima palavra de cada keyword do hint —
+    tolera conjugacoes verbais (pesquisa/pesquisar/pesquise/pesquisando)
+    em vez de exigir substring exata."""
+    t = task.lower()
+    hits = set()
+    for key, spec in SPECIALISTS.items():
+        hint = spec.get("hint", "")
+        if not hint:
+            continue
+        for kw in hint.split(","):
+            kw = kw.strip()
+            if not kw:
+                continue
+            core = kw.split()[-1] if " " in kw else kw
+            stem = core[:5] if len(core) > 5 else core
+            if stem and stem in t:
+                hits.add(key)
+                break
+    return hits
+
+
+def is_multi_domain(task: str, min_domains: int = 2) -> bool:
+    """Detecta tarefa composta (multiplos dominios sequenciais).
+    min_domains=3 → modo colaborativo (especialistas paralelos).
+    min_domains=2 → plan-then-execute single-agent com toolset completo."""
+    if len(task) < 30:
+        return False
+    t = task.lower()
+    if not any(w in t for w in _SEQ_WORDS):
+        return False
+    return len(domain_hits(task)) >= min_domains
+
 
 class OrchestratorAgent:
     _llm_cache: dict[str, object] = {}  # model_name → OllamaLLM (shared across instances)
@@ -218,27 +255,18 @@ class OrchestratorAgent:
     # Detecção de tarefa multi-domínio
     # -----------------------------------------------------------------
     def _needs_collaboration(self, task: str) -> bool:
-        t = task.lower()
-        seq_words = [" e ", " depois ", " então ", " em seguida ", " também "]
-        if not any(w in t for w in seq_words) or len(task) < 30:
-            return False
-        # Conta domínios distintos detectados
-        domains = sum(
-            any(kw.strip() in t for kw in spec["hint"].split(",")[:2])
-            for spec in SPECIALISTS.values()
-            if spec["hint"]
-        )
-        return domains >= 3
+        return is_multi_domain(task, min_domains=3)
 
     # -----------------------------------------------------------------
     # Criação de especialista
     # -----------------------------------------------------------------
-    def _create_specialist(self, specialist_name: str):
+    def _create_specialist(self, specialist_name: str, full_tools: bool = False):
         from agent import ReActAgent
 
         spec  = SPECIALISTS[specialist_name]
-        tools = ([self.all_tools[t] for t in spec["tools"] if t in self.all_tools]
-                 if spec["tools"] else list(self.all_tools.values()))
+        tools = (list(self.all_tools.values())
+                 if full_tools or not spec["tools"]
+                 else [self.all_tools[t] for t in spec["tools"] if t in self.all_tools])
 
         model          = get_specialist_model(specialist_name)
         specialist_llm = self._get_llm(model)
@@ -265,13 +293,16 @@ class OrchestratorAgent:
         specialist_name = self._classify(task)
         spec_label      = SPECIALISTS[specialist_name]["label"]
         spec_model      = get_specialist_model(specialist_name)
+        multi_domain    = is_multi_domain(task, min_domains=2)
         emit({"type": "thought", "content": f"Especialista: {spec_label} · {spec_model}"})
-        log.info("ORCHESTRATOR → %s (model=%s)", spec_label, spec_model)
+        if multi_domain:
+            emit({"type": "thought", "content": "Tarefa multi-dominio — liberando todas as ferramentas para o especialista"})
+        log.info("ORCHESTRATOR → %s (model=%s, full_tools=%s)", spec_label, spec_model, multi_domain)
 
         if spec_model not in OrchestratorAgent._llm_cache:
             emit({"type": "thought", "content": f"Carregando modelo '{spec_model}'..."})
 
-        agent = self._create_specialist(specialist_name)
+        agent = self._create_specialist(specialist_name, full_tools=multi_domain)
         with self._lock:
             self._active.append(agent)
         try:
@@ -300,6 +331,14 @@ class OrchestratorAgent:
             for i, a in enumerate(assignments)
         )
         emit({"type": "thought", "content": f"Plano colaborativo:\n{plan}"})
+        emit({
+            "type": "workflow_plan",
+            "task": task,
+            "nodes": [
+                {"id": i, "specialist": a["specialist"], "label": SPECIALISTS[a["specialist"]]["label"], "subtask": a["subtask"]}
+                for i, a in enumerate(assignments)
+            ],
+        })
 
         results  = [None] * len(assignments)
         res_lock = threading.Lock()
@@ -312,7 +351,7 @@ class OrchestratorAgent:
             subtask = assignment["subtask"]
 
             spec_model = get_specialist_model(name)
-            emit({"type": "agent_status", "agent": f"{label}·{spec_model}", "status": "running", "subtask": subtask})
+            emit({"type": "agent_status", "id": idx, "agent": f"{label}·{spec_model}", "status": "running", "subtask": subtask})
 
             agent = self._create_specialist(name)
             with self._lock:
@@ -322,16 +361,18 @@ class OrchestratorAgent:
                 if data.get("type") in ("thought", "action", "observation", "error"):
                     emit({**data, "agent": label})
 
+            error = False
             try:
                 result = agent.run(subtask, max_steps=8, step_callback=sub_cb)
             except Exception as e:
                 result = f"Erro em {label}: {e}"
+                error = True
             finally:
                 with self._lock:
                     if agent in self._active:
                         self._active.remove(agent)
 
-            emit({"type": "agent_status", "agent": label, "status": "done", "result": result[:200]})
+            emit({"type": "agent_status", "id": idx, "agent": label, "status": "error" if error else "done", "result": result[:200]})
             with res_lock:
                 results[idx] = result
 
@@ -349,6 +390,7 @@ class OrchestratorAgent:
         if len(valid) == 1:
             return valid[0][1]
 
+        emit({"type": "agent_status", "id": "aggregate", "agent": "Agregador", "status": "running"})
         emit({"type": "thought", "content": "Agregando resultados dos especialistas..."})
         agg_prompt = (
             f"Tarefa original: {task}\n\n"
@@ -357,6 +399,7 @@ class OrchestratorAgent:
             "\n\nCombine os resultados em uma resposta final coesa e completa:\nFinal Answer:"
         )
         final = self.llm.generate(agg_prompt)
+        emit({"type": "agent_status", "id": "aggregate", "agent": "Agregador", "status": "done", "result": final[:200]})
         emit({"type": "final", "content": final})
         return final
 

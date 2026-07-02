@@ -13,7 +13,7 @@ if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-from config import TOOL_TIMEOUT, MAX_TOOL_CALLS, MAX_TOOL_RETRIES, MAX_STEPS, REFLECTION_ENABLED, REFLECTION_THRESHOLD, HITL_ENABLED, HITL_BEFORE_TOOLS
+from config import TOOL_TIMEOUT, TOOL_TIMEOUTS, MAX_TOOL_CALLS, MAX_TOOL_RETRIES, MAX_STEPS, REFLECTION_ENABLED, REFLECTION_THRESHOLD, HITL_ENABLED, HITL_BEFORE_TOOLS
 import audit
 from memory import Memory
 from user_profile import UserProfile
@@ -382,12 +382,13 @@ class ReActAgent:
             if not self._hitl_gate(action, action_input):
                 return "Acao cancelada pelo usuario (Human-in-the-Loop)."
         t0 = time.monotonic()
+        timeout = TOOL_TIMEOUTS.get(action, TOOL_TIMEOUT)
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
             future = ex.submit(self.tools[action].run, action_input)
             try:
-                result = str(future.result(timeout=TOOL_TIMEOUT))
+                result = str(future.result(timeout=timeout))
             except concurrent.futures.TimeoutError:
-                result = f"Erro: '{action}' excedeu {TOOL_TIMEOUT}s e foi cancelada."
+                result = f"Erro: '{action}' excedeu {timeout}s e foi cancelada."
             except Exception as e:
                 result = f"Erro ao executar {action}: {str(e)}"
         audit.log_action(action, action_input, result, duration=time.monotonic() - t0)
@@ -431,21 +432,8 @@ class ReActAgent:
             return 4, "", []
 
     def _is_compound(self, task: str) -> bool:
-        if len(task) < 30:
-            return False
-        t = task.lower()
-        # Padrões que indicam claramente múltiplas ferramentas sequenciais
-        compound_patterns = [
-            r"pesquise.{1,40}e salve",
-            r"busque.{1,40}e salve",
-            r"pesquise.{1,40}e escreva",
-            r"calcule.{1,40}e salve",
-            r"crie.{1,40}e depois",
-            r"pesquise.{1,40}e depois",
-            r"primeiro.{1,60}depois",
-            r"baixe.{1,40}e salve",
-        ]
-        return any(re.search(p, t) for p in compound_patterns)
+        from orchestrator import is_multi_domain
+        return is_multi_domain(task, min_domains=2)
 
     def _plan(self, task: str, emit) -> list:
         emit({"type": "step", "content": "Planejando subtarefas..."})

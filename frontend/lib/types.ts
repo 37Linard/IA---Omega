@@ -25,11 +25,28 @@ export interface TokenUsage {
   completion: number
 }
 
+export interface WorkflowNode {
+  id: number | string
+  specialist: string
+  label: string
+  subtask: string
+  status: 'pending' | 'running' | 'done' | 'error'
+  result?: string
+}
+
+export interface WorkflowPlan {
+  task: string
+  nodes: WorkflowNode[]
+  aggregateStatus?: 'running' | 'done'
+  aggregateResult?: string
+}
+
 export interface Message {
   id: string
   role: MessageRole
   content: string
   steps: AgentStep[]
+  workflow?: WorkflowPlan
   isStreaming: boolean
   streamingThought: string
   tokenUsage?: TokenUsage
@@ -72,5 +89,6 @@ export type WsMessage =
   | { type: 'reflection'; content: string; score: number; accepted: boolean }
   | { type: 'reset_content'; content: string }
   | { type: 'token_usage'; prompt: number; completion: number }
-  | { type: 'agent_status'; agent: string; status: 'running' | 'done'; subtask?: string; result?: string }
+  | { type: 'agent_status'; id?: number | string; agent: string; status: 'running' | 'done' | 'error'; subtask?: string; result?: string }
+  | { type: 'workflow_plan'; task: string; nodes: { id: number; specialist: string; label: string; subtask: string }[] }
   | { type: 'hitl_request'; id: string; action: string; input: unknown; message: string }

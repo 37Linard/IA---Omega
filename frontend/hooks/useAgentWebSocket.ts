@@ -81,9 +81,15 @@ export function useAgentWebSocket() {
               type:    'agent_status',
               content: data.status === 'running'
                 ? `[${data.agent}] ${data.subtask ?? ''}`
-                : `[${data.agent}] concluído`,
+                : `[${data.agent}] ${data.status === 'error' ? 'erro' : 'concluído'}`,
               agent: data.agent,
             })
+            if (data.id !== undefined) {
+              s.updateWorkflowNode(msgId, data.id, data.status, data.result)
+            }
+            break
+          case 'workflow_plan':
+            s.setWorkflowPlan(msgId, data.task, data.nodes)
             break
           case 'correction':
             s.addStep(msgId, { type: 'correction', content: data.content })

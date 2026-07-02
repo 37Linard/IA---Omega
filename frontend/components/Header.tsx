@@ -1,10 +1,11 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Menu, Sun, Moon, User, Heart, Cpu, Database, Trash2, FolderOpen, RefreshCw, CheckCircle, XCircle, Loader2, Layers, GitGraph, LayoutGrid } from 'lucide-react'
+import { Menu, Sun, Moon, User, Heart, Cpu, Database, Trash2, FolderOpen, RefreshCw, CheckCircle, XCircle, Loader2, Layers, GitGraph, LayoutGrid, Workflow } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
 import { fetchModels, setModel, fetchProfile, saveProfile, fetchRagDocs, ragIndexFolder, ragDeleteDoc, uploadFile, fetchMetrics, fetchSandboxStatus, fetchSpecialistModels, setSpecialistModel } from '@/lib/api'
 import { ThoughtTree } from './ThoughtTree'
+import { WorkflowDAG } from './WorkflowDAG'
 import type { UserProfile } from '@/lib/types'
 import { useRouter } from 'next/navigation'
 
@@ -21,6 +22,7 @@ export function Header({ onToggleSidebar }: Props) {
   const [ragOpen, setRagOpen] = useState(false)
   const [modelsOpen, setModelsOpen] = useState(false)
   const [nocOpen,    setNocOpen]    = useState(false)
+  const [workflowOpen, setWorkflowOpen] = useState(false)
   const [profile, setProfile] = useState<UserProfile | null>(null)
 
   useEffect(() => {
@@ -111,6 +113,10 @@ export function Header({ onToggleSidebar }: Props) {
             <GitGraph size={15} />
           </HeaderBtn>
 
+          <HeaderBtn onClick={() => setWorkflowOpen(true)} title="Workflow — DAG de Execução Paralela">
+            <Workflow size={15} />
+          </HeaderBtn>
+
           <HeaderBtn onClick={() => setModelsOpen(true)} title="Modelos por Especialista">
             <Layers size={15} />
           </HeaderBtn>
@@ -137,6 +143,12 @@ export function Header({ onToggleSidebar }: Props) {
         <ThoughtTree
           steps={(conv?.messages.filter(m => m.role === 'assistant').at(-1)?.steps) ?? []}
           onClose={() => setNocOpen(false)}
+        />
+      )}
+      {workflowOpen && (
+        <WorkflowDAG
+          workflow={conv?.messages.filter(m => m.role === 'assistant').at(-1)?.workflow}
+          onClose={() => setWorkflowOpen(false)}
         />
       )}
       {modelsOpen && <SpecialistModelsModal models={models} onClose={() => setModelsOpen(false)} />}
