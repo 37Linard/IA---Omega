@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Conversation, Message, AgentStep } from '@/lib/types'
+import type { Conversation, Message, AgentStep, WorkflowNode } from '@/lib/types'
 import { generateId, extractTitle } from '@/lib/utils'
 
 export interface HitlRequest {
@@ -35,6 +35,8 @@ interface ChatState {
   appendToken: (msgId: string, token: string) => void
   appendFinalToken: (msgId: string, token: string) => void
   addStep: (msgId: string, step: Omit<AgentStep, 'id'>) => void
+  setWorkflowPlan: (msgId: string, task: string, nodes: Omit<WorkflowNode, 'status'>[]) => void
+  updateWorkflowNode: (msgId: string, nodeId: number | string, status: WorkflowNode['status'], result?: string) => void
   appendThought: (msgId: string, token: string) => void
   finalizeMessage: (msgId: string, content?: string) => void
   resetContent: (msgId: string) => void
@@ -184,6 +186,59 @@ export const useChatStore = create<ChatState>()(
                       ? { ...m, steps: [...m.steps, fullStep], streamingThought: '' }
                       : m
                   ),
+                }
+              : c
+          ),
+        }))
+      },
+
+      setWorkflowPlan: (msgId, task, nodes) => {
+        const s = get()
+        set(state => ({
+          conversations: state.conversations.map(c =>
+            c.id === s.activeId
+              ? {
+                  ...c,
+                  messages: c.messages.map(m =>
+                    m.id === msgId
+                      ? { ...m, workflow: { task, nodes: nodes.map(n => ({ ...n, status: 'pending' as const })) } }
+                      : m
+                  ),
+                }
+              : c
+          ),
+        }))
+      },
+
+      updateWorkflowNode: (msgId, nodeId, status, result) => {
+        const s = get()
+        set(state => ({
+          conversations: state.conversations.map(c =>
+            c.id === s.activeId
+              ? {
+                  ...c,
+                  messages: c.messages.map(m => {
+                    if (m.id !== msgId || !m.workflow) return m
+                    if (nodeId === 'aggregate') {
+                      return {
+                        ...m,
+                        workflow: {
+                          ...m.workflow,
+                          aggregateStatus: status === 'running' ? 'running' : 'done',
+                          aggregateResult: result ?? m.workflow.aggregateResult,
+                        },
+                      }
+                    }
+                    return {
+                      ...m,
+                      workflow: {
+                        ...m.workflow,
+                        nodes: m.workflow.nodes.map(n =>
+                          n.id === nodeId ? { ...n, status, result: result ?? n.result } : n
+                        ),
+                      },
+                    }
+                  }),
                 }
               : c
           ),

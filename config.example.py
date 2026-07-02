@@ -25,7 +25,10 @@ NUM_CTX           = 3072   # context window (3072 = padrão, 4096 = mais context
 NUM_GPU           = -1     # -1 = usa todas as camadas GPU disponíveis
 TEMPERATURE       = 0.1    # 0.0 = determinístico, 1.0 = criativo
 
-TOOL_TIMEOUT      = 30     # segundos máximos por ferramenta
+TOOL_TIMEOUT      = 30     # segundos máximos por ferramenta (padrão)
+TOOL_TIMEOUTS: dict = {    # overrides por ferramenta — usa TOOL_TIMEOUT se não listada aqui
+    "generate_image": 180,  # Stable Diffusion local — CPU é lento, GPU carrega modelo na 1ª chamada
+}
 MAX_TOOL_CALLS    = 25     # max chamadas de ferramenta por tarefa
 MAX_TOOL_RETRIES  = 3      # tentativas de auto-correção em caso de erro
 TASK_TIMEOUT      = 300    # timeout total da tarefa em segundos
@@ -74,3 +77,11 @@ SLACK_BOT_TOKEN   = ""
 # 2. Credenciais → OAuth 2.0 → Aplicativo de computador → baixar JSON
 # 3. Salvar como gdrive_credentials.json na pasta do projeto
 # O token é gerado automaticamente na primeira execução (gdrive_token.json)
+
+# ── Geração de imagem — Stable Diffusion local (opcional) ─────────────────
+# Requer: pip install torch diffusers accelerate
+IMAGE_GEN_MODEL          = "stabilityai/sd-turbo"
+IMAGE_GEN_DEVICE         = "auto"   # "auto" | "cuda" | "cpu"
+IMAGE_GEN_STEPS          = 2
+IMAGE_GEN_SIZE           = 512
+IMAGE_GEN_GUIDANCE_SCALE = 0.0

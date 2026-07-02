@@ -16,3 +16,10 @@ pyperclip
 playwright
 redis
 networkx
+
+# generate_image_tool (Stable Diffusion local) — opcional, downloads grandes
+# Windows + GPU: instale torch com CUDA ANTES deste arquivo (https://pytorch.org/get-started/locally/)
+# senão cai pra CPU automaticamente.
+torch
+diffusers
+accelerate

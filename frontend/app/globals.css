@@ -141,10 +141,15 @@ body {
   0%, 60%, 100% { transform: translateY(0);    opacity: 0.4; }
   30%            { transform: translateY(-4px); opacity: 1;   }
 }
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 6px 0 var(--pulse-color, #818cf8); }
+  50%       { box-shadow: 0 0 18px 4px var(--pulse-color, #818cf8); }
+}
 
 .anim-fade-up { animation: fadeUp 0.22s cubic-bezier(0.16,1,0.3,1) forwards; }
 .anim-fade-in { animation: fadeIn 0.18s ease forwards; }
 .cursor-blink  { animation: pulse-cursor 1s ease-in-out infinite; }
+.anim-pulse-glow { animation: pulse-glow 1.4s ease-in-out infinite; }
 
 .thinking-dot { animation: thinking-dot 1.4s ease-in-out infinite; }
 .thinking-dot:nth-child(2) { animation-delay: 0.16s; }

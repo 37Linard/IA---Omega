@@ -23,7 +23,10 @@ NUM_CTX           = 4096   # context window em tokens
 NUM_GPU           = -1     # -1 = todas as camadas na GPU (auto)
 TEMPERATURE       = 0.1
 
-TOOL_TIMEOUT      = 30     # segundos máximos por ferramenta
+TOOL_TIMEOUT      = 30     # segundos máximos por ferramenta (padrão)
+TOOL_TIMEOUTS: dict = {    # overrides por ferramenta — usa TOOL_TIMEOUT se não listada aqui
+    "generate_image": 180,  # Stable Diffusion local — CPU é lento, GPU carrega modelo na 1ª chamada
+}
 MAX_TOOL_CALLS    = 15     # max chamadas de ferramenta por tarefa
 MAX_TOOL_RETRIES  = 3      # tentativas de auto-correção em erros
 TASK_TIMEOUT      = 300    # timeout total da tarefa (5 min)
@@ -91,3 +94,13 @@ NOTION_DATABASE_ID = os.environ.get("NOTION_DATABASE_ID", "")
 # api.slack.com → Your App → Incoming Webhooks ou OAuth & Permissions
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
 SLACK_BOT_TOKEN   = os.environ.get("SLACK_BOT_TOKEN", "")
+
+# -- Geracao de imagem - Stable Diffusion local (opcional) ------------------
+# Requer: pip install torch diffusers accelerate
+# GPU (RTX 2060 2GB) ja esta ocupada pelo Ollama -- sd-turbo tenta CUDA e cai
+# pra CPU automaticamente se faltar VRAM (ver tools/generate_image_tool.py).
+IMAGE_GEN_MODEL          = "stabilityai/sd-turbo"
+IMAGE_GEN_DEVICE         = "auto"   # "auto" | "cuda" | "cpu"
+IMAGE_GEN_STEPS          = 2        # sd-turbo: 1-4 passos ja da resultado bom
+IMAGE_GEN_SIZE           = 512
+IMAGE_GEN_GUIDANCE_SCALE = 0.0      # 0.0 pra modelos turbo (sem CFG); SD normal usa ~7.5
