@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 from datetime import datetime
 
 log = logging.getLogger(__name__)
@@ -11,17 +12,79 @@ TECH_LEVELS = ["iniciante", "intermediário", "avançado", "especialista"]
 TONES       = ["informal", "neutro", "formal", "técnico"]
 
 DEFAULT_PROFILE = {
-    "name":            "",
-    "tech_level":      "intermediário",
-    "tone":            "neutro",
-    "language":        "pt-BR",
-    "preferences":     [],
-    "topics_interest": [],
-    "study_progress":  {},
-    "interactions":    0,
-    "created":         "",
-    "updated":         "",
+    "name":              "",
+    "tech_level":        "intermediário",
+    "tech_level_auto":   True,   # False assim que o usuário seta tech_level manualmente
+    "tech_score":        0.0,    # EMA do sinal técnico das mensagens — não exposto na UI
+    "tech_observations": 0,      # mensagens observadas — evita ajustar nível cedo demais
+    "tone":              "neutro",
+    "language":          "pt-BR",
+    "preferences":       [],
+    "topics_interest":   [],
+    "study_progress":    {},
+    "interactions":      0,
+    "created":           "",
+    "updated":           "",
 }
+
+# ── Auto-detecção de nível técnico ──────────────────────────────────────────
+# Heurística leve (sem chamada de LLM), mesmo espírito do domain_hits() em
+# orchestrator.py: conta jargão técnico e sinais de "sou iniciante" na
+# mensagem em vez de pedir pro modelo classificar (custaria uma inferência
+# extra por turno).
+_ADVANCED_TERMS = {
+    "algoritmo", "algoritmos", "complexidade", "kubernetes", "docker", "endpoint",
+    "endpoints", "assincrono", "assíncrono", "threading", "regex", "índice", "indice",
+    "query", "queries", "framework", "dependencia", "dependência", "compilar",
+    "runtime", "stacktrace", "stack trace", "exception", "debugar", "refatorar",
+    "refatoracao", "refatoração", "arquitetura", "middleware", "cache", "concorrencia",
+    "concorrência", "mutex", "websocket", "kubectl", "microservico", "microserviço",
+    "orm", "schema", "migracao", "migração", "deploy", "ci/cd", "sdk",
+    "backend", "frontend", "async", "await", "callback", "closure", "recursao",
+    "recursão", "buffer", "socket", "protocolo", "criptografia", "hash", "jwt",
+    "oauth", "webhook", "orquestracao", "orquestração", "pipeline", "container",
+    "namespace", "singleton", "polimorfismo", "heranca", "herança", "big o",
+}
+
+_BEGINNER_PHRASES = (
+    "não entendi", "nao entendi", "o que é", "o que e", "pra que serve",
+    "para que serve", "como assim", "sou iniciante", "nunca programei",
+    "explica simples", "explica mais simples", "não sei nada de",
+    "nao sei nada de", "sou leigo", "sou leiga", "primeira vez que",
+    "estou aprendendo", "iniciando agora", "explica como se eu",
+    "não manjo", "nao manjo", "sou novo nisso", "sou novato", "sou novata",
+)
+
+_CODE_PATTERN = re.compile(r'```|`[^`\n]{3,}`|\bdef \w+\(|\bfunction\s*\(|\bimport \w+|\bclass \w+|SELECT .+ FROM|=>')
+
+_SCORE_THRESHOLDS = (
+    (1.2, "especialista"),
+    (0.4, "avançado"),
+    (-0.4, "intermediário"),
+)
+
+
+def _detect_tech_signal(text: str) -> float:
+    t = text.lower()
+    signal = 0.0
+
+    advanced_hits = sum(1 for term in _ADVANCED_TERMS if term in t)
+    signal += min(advanced_hits, 3) * 0.5
+
+    if _CODE_PATTERN.search(text):
+        signal += 0.8
+
+    beginner_hits = sum(1 for phrase in _BEGINNER_PHRASES if phrase in t)
+    signal -= min(beginner_hits, 2) * 1.0
+
+    return max(-2.0, min(2.0, signal))
+
+
+def _level_from_score(score: float) -> str:
+    for threshold, level in _SCORE_THRESHOLDS:
+        if score >= threshold:
+            return level
+    return "iniciante"
 
 _LEVEL_INSTRUCTIONS = {
     "iniciante":     "Use linguagem simples. Evite jargões. Explique passo a passo com analogias do cotidiano.",
@@ -73,6 +136,31 @@ class UserProfile:
         self.save()
         log.info("UserProfile atualizado: %s", list(kwargs.keys()))
 
+    def observe_message(self, text: str):
+        """Atualiza o nível técnico estimado a partir do texto da mensagem.
+        Não faz nada se o usuário já travou o nível manualmente (tech_level_auto=False)
+        via POST /profile — auto-detecção nunca sobrescreve escolha explícita."""
+        if not text or not self.data.get("tech_level_auto", True):
+            return
+
+        signal = _detect_tech_signal(text)
+        prev_score = self.data.get("tech_score", 0.0)
+        score = prev_score * 0.8 + signal * 0.2
+        self.data["tech_score"] = round(score, 3)
+        self.data["tech_observations"] = self.data.get("tech_observations", 0) + 1
+
+        # espera algumas mensagens antes de ajustar — evita virar o nível na
+        # primeira frase técnica ou confusa que aparecer
+        if self.data["tech_observations"] < 3:
+            self.save()
+            return
+
+        new_level = _level_from_score(score)
+        if new_level != self.data.get("tech_level"):
+            self.data["tech_level"] = new_level
+            log.info("UserProfile: nível técnico auto-detectado -> %s (score=%.2f)", new_level, score)
+        self.save()
+
     def increment_interactions(self):
         self.data["interactions"] = self.data.get("interactions", 0) + 1
         self.save()
@@ -102,7 +190,8 @@ class UserProfile:
             lines.append(f"Nome: {self.data['name']}")
         level = self.data.get("tech_level", "intermediário")
         tone  = self.data.get("tone", "neutro")
-        lines.append(f"Nível técnico: {level}")
+        auto_tag = " (auto-detectado)" if self.data.get("tech_level_auto", True) else ""
+        lines.append(f"Nível técnico: {level}{auto_tag}")
         lines.append(f"Tom preferido: {tone}")
         prefs = self.data.get("preferences", [])
         if prefs:

@@ -4,7 +4,8 @@ fastapi
 uvicorn[standard]
 beautifulsoup4
 python-multipart
-chromadb
+lancedb
+fastembed
 pypdf
 watchdog
 pyjwt
@@ -16,10 +17,16 @@ pyperclip
 playwright
 redis
 networkx
+wasmtime
 
 # generate_image_tool (Stable Diffusion local) — opcional, downloads grandes
-# Windows + GPU: instale torch com CUDA ANTES deste arquivo (https://pytorch.org/get-started/locally/)
+# Windows + GPU: instale torch com CUDA ANTES deste arquivo, ex.:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu126
+# (verificar index com wheel pra sua versao de Python — cu121/cu124 nao tem py3.14+)
 # senão cai pra CPU automaticamente.
 torch
 diffusers
 accelerate
+
+# generate_chart_tool
+matplotlib

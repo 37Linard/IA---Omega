@@ -1,10 +1,11 @@
-# 🤖 Agente IA Local — v1.0
+# 🤖 Agente IA Local — v1.1
 
 > Assistente de IA autônomo rodando **100% na sua máquina** — sem APIs externas, sem custos por token, sem dados saindo do seu PC.
 
-Usa Ollama para inferência local, arquitetura ReAct para raciocínio passo a passo, e 28 ferramentas reais para executar tarefas complexas.
+Usa Ollama para inferência local, arquitetura ReAct para raciocínio passo a passo, e 30 ferramentas reais para executar tarefas complexas.
 
-**v1.0** — Tiered Memory · Reflection Loop · Multi-model por especialista · Docker Sandbox · Visual Browser · NOC Dashboard + HITL
+**v1.0** — Tiered Memory · Reflection Loop · Multi-model por especialista · WASM/Docker Sandbox · Visual Browser · NOC Dashboard + HITL
+**v1.1** — Geração de imagem local (SD-turbo) · LanceDB (substituiu ChromaDB) · Export de conversa pro Obsidian · Auto-detect de nível técnico · Plugin manager sandboxado
 
 ---
 
@@ -38,7 +39,7 @@ IA:   [Raciocínio] Vou buscar o preço, gerar o chart e salvar...
 
 ### RAG — Documentos Locais
 - Indexe PDF, TXT, Markdown e DOCX
-- **Busca híbrida**: 65% semântica (ChromaDB) + 35% palavras-chave (BM25) — melhor precisão para termos técnicos
+- **Busca híbrida**: 65% semântica (LanceDB) + 35% palavras-chave (BM25) — melhor precisão para termos técnicos
 - Arraste arquivos ou aponte uma pasta inteira para indexar
 - Auto-indexação: coloque arquivos em `workspace/` e eles são indexados automaticamente
 
@@ -54,10 +55,10 @@ IA:   [Raciocínio] Vou buscar o preço, gerar o chart e salvar...
 
 | Fase | Feature |
 |---|---|
-| 1 | **Tiered Memory** — Redis (curta), ChromaDB+BM25 (episódica), grafo semântico (longo prazo) |
+| 1 | **Tiered Memory** — Redis (curta), LanceDB+BM25 (episódica), grafo semântico (longo prazo) |
 | 2 | **Reflection Loop** — critic LLM avalia resposta (score 1-5), retry se abaixo do threshold |
 | 3 | **Multi-model** — modelo diferente por especialista, troca sem restart via UI |
-| 4 | **Docker Sandbox** — `run_python` em container isolado (sem rede, 256MB RAM, sem root) |
+| 4 | **Sandbox WASM/Docker** — `run_python` isolado: WASM (boot instantâneo) → Docker (sem rede, 256MB RAM, sem root) → local |
 | 5 | **Visual Browser** — Playwright + VLM: agente vê páginas como imagens, screenshots inline no chat |
 | 6 | **NOC + HITL** — React Flow com árvore de raciocínio, Human-in-the-Loop para ferramentas sensíveis |
 
@@ -73,6 +74,7 @@ O agente principal delega tarefas para especialistas:
 
 ### Perfil de Usuário
 Salva nível técnico (iniciante → especialista) e tom preferido. O agente adapta as explicações automaticamente.
+**Auto-detecção de nível**: o agente ajusta `tech_level` sozinho lendo jargão técnico, blocos de código e frases de dificuldade nas mensagens (sem custo de LLM extra) — some pra "avançado" se você manda termos técnicos, desce pra "iniciante" se pergunta "o que é X". Define o nível manualmente no perfil e a auto-detecção para de mexer.
 
 ### Agendamento
 Tarefas recorrentes via `SCHEDULED_TASKS` em `config.py`:
@@ -84,7 +86,7 @@ SCHEDULED_TASKS = [
 
 ---
 
-## 🛠️ 28 Ferramentas
+## 🛠️ 30 Ferramentas
 
 O agente decide sozinho qual usar baseado na tarefa.
 
@@ -93,21 +95,29 @@ O agente decide sozinho qual usar baseado na tarefa.
 | **Web** | `web_search`, `fetch_page`, `http_request`, `browser` (Playwright) |
 | **Arquivos** | `read_file`, `write_file`, `list_directory` |
 | **Código** | `run_python` (Docker sandbox), `run_sql`, `terminal` (sandboxed), `git` |
-| **Dados** | `read_spreadsheet` (CSV/Excel), `generate_chart` (matplotlib), `rag_search` |
+| **Dados** | `read_spreadsheet` (CSV/Excel), `generate_chart` (matplotlib), `generate_report`, `rag_search`, `get_crypto` |
 | **Visão** | `analyze_image` (LLaVA multimodal), `generate_image` (Stable Diffusion local — sd-turbo) |
 | **Memória** | `remember_fact`, `save_note` (Obsidian) |
 | **Computer Use** | `screenshot`, `keyboard`, `mouse`, `clipboard` |
 | **Integrações** | `email`, `notion`, `slack`, `google_drive`, `get_currency` |
+| **Dev/teste** | `echo` (smoke test, não usado em produção) |
 
 ### Sandbox de segurança
-- `run_python` → Docker isolado (sem rede, 256MB RAM, 1 CPU, user 65534, sem root) — fallback local com aviso se Docker offline
+- `run_python` → hierarquia **WASM → Docker → local**:
+  - **WASM** (`wasmtime` + CPython/WASI) — sem rede, memória limitada, `/workspace` read-only, timeout via epoch interruption. Boot quase instantâneo (módulo compilado uma vez e cacheado) — sem overhead de `docker run` a cada chamada. Só stdlib (sem numpy/pandas)
+  - **Docker** (se WASM não disponível) — isolado, sem rede, 256MB RAM, 1 CPU, user 65534, sem root — numpy/pandas/matplotlib/scipy disponíveis na imagem `ia-sandbox`
+  - **Local** (fallback final, com aviso) — se nem WASM nem Docker disponíveis
 - `terminal` → whitelist de comandos permitidos
 - `http_request` → SSRF bloqueado (IPs privados bloqueados)
 - `read_file` → whitelist de pastas configurável
 - `browser` → headless Chromium, screenshot analisado por VLM local
 
 ```bash
-# Buildar sandbox com numpy/pandas/matplotlib/scipy
+# Sandbox WASM (recomendado — mais rápido, não precisa Docker Desktop rodando)
+pip install wasmtime
+download_wasm_sandbox.bat
+
+# Sandbox Docker com numpy/pandas/matplotlib/scipy (usado se WASM não disponível)
 build_sandbox.bat
 ```
 
@@ -119,7 +129,7 @@ build_sandbox.bat
 - [Ollama](https://ollama.com) instalado e rodando
 - Python 3.10+
 - Node.js 18+
-- Docker Desktop (para sandbox do `run_python`)
+- Docker Desktop (opcional — sandbox `run_python` usa WASM primeiro, Docker é fallback)
 
 ### 1. Clonar e instalar dependências
 
@@ -140,11 +150,11 @@ cd frontend && npm install && cd ..
 ### 2. Baixar um modelo
 
 ```bash
-# Rápido (2GB) — recomendado para GPUs com 4-6GB VRAM
-ollama pull llama3.2:3b
-
-# Mais capaz (4.7GB)
+# Recomendado — melhor qualidade em tarefas compostas (4.7GB VRAM)
 ollama pull qwen2.5:7b
+
+# Alternativa mais rápida, mas ignora instrução composta com mais frequência (2GB VRAM)
+ollama pull llama3.2:3b
 
 # Visual Browser — VLM local (cabe em 2GB VRAM)
 ollama pull moondream:1.8b
@@ -163,7 +173,7 @@ cp config.example.py config.py
 
 Edite `config.py`:
 ```python
-OLLAMA_MODEL = "llama3.2:3b"   # modelo escolhido
+OLLAMA_MODEL = "qwen2.5:7b"   # modelo escolhido
 OBSIDIAN_BASE = r"C:\Seu\Vault\Obsidian"  # opcional
 ```
 
@@ -194,7 +204,7 @@ Tudo em `config.py`:
 
 ```python
 # Modelos
-OLLAMA_MODEL      = "llama3.2:3b"    # qualquer modelo Ollama
+OLLAMA_MODEL      = "qwen2.5:7b"     # qualquer modelo Ollama
 VISION_MODEL      = "moondream:1.8b" # VLM para browser visual (cabe em 2GB VRAM)
 MANAGER_MODEL     = ""               # modelo para roteamento — vazio = herda OLLAMA_MODEL
 
@@ -255,6 +265,19 @@ class MinhaTool:
 
 Salve o arquivo — é detectado e carregado automaticamente pelo plugin system. Sem reiniciar o servidor.
 
+### Plugins de terceiros (via URL) — opcional, desligado por padrão
+
+`plugin_manager.py` instala ferramentas publicadas por terceiros, com verificação de integridade e execução sandboxada. Diferente de `tools/*_tool.py` (código de primeira parte, roda direto no processo), plugin é código não confiável — instalação é sempre manual, e a execução acontece dentro do [sandbox WASM](#sandbox-de-segurança), nunca via `import` no processo do agente.
+
+```bash
+python plugin_manager.py stage <manifest_url>    # baixa e verifica o hash — nada roda ainda
+python plugin_manager.py list                     # staged vs approved
+python plugin_manager.py approve <nome>            # só depois de VOCÊ ler o código
+python plugin_manager.py run <nome> '{"n": 21}'    # exige PLUGINS_ENABLED=True em config.py
+```
+
+Ver a docstring de `plugin_manager.py` pro modelo de segurança completo. Nunca é chamado pelo agente sozinho — instalar plugin de terceiro é decisão sua, não dele.
+
 ---
 
 ## 🔒 Segurança e Privacidade
@@ -288,10 +311,10 @@ Browser ──WebSocket──► FastAPI (api.py)
                        [auto-correção]
                             │
                      tool_loader.py
-                     28 tools (plugins)
+                     30 tools (plugins)
                             │
                memory.py  rag.py  user_profile.py
-               ChromaDB   BM25    audit.db
+               LanceDB    BM25    audit.db
 ```
 
 ---
@@ -304,7 +327,9 @@ agente-ia-local/
 ├── agent.py             # ReActAgent + auto-correção
 ├── orchestrator.py      # Multi-agente (6 especialistas)
 ├── llm.py               # Cliente Ollama (streaming, TPS/TTFT tracking)
-├── rag.py               # ChromaDB + BM25 híbrido (PDF/TXT/MD/DOCX)
+├── rag.py               # LanceDB + BM25 híbrido (PDF/TXT/MD/DOCX)
+├── vector_store.py      # wrapper LanceDB (upsert/query/delete por id ou filtro)
+├── embeddings.py        # embedder compartilhado — Ollama (nomic-embed-text) ou fastembed local
 ├── memory.py            # Persistência de sessões + backup
 ├── user_profile.py      # Perfil do usuário
 ├── tool_loader.py       # Plugin system (auto-carrega tools/)
@@ -318,7 +343,7 @@ agente-ia-local/
 ├── requirements.txt
 ├── iniciar.bat          # Backend (porta 8000)
 ├── iniciar_frontend.bat # Backend + Next.js (porta 3000)
-├── tools/               # 28 ferramentas — adicione arquivos aqui
+├── tools/               # 30 ferramentas — adicione arquivos aqui
 └── frontend/            # Next.js 16 + React 19 + TypeScript + Tailwind v4
 ```
 
@@ -334,7 +359,8 @@ fastapi
 uvicorn[standard]
 beautifulsoup4
 python-multipart
-chromadb
+lancedb
+fastembed
 pypdf
 rank-bm25
 python-docx
@@ -352,6 +378,7 @@ google-auth-httplib2
 matplotlib
 pandas
 openpyxl
+wasmtime
 
 # generate_image_tool (Stable Diffusion local) — opcional, downloads grandes
 torch
@@ -360,31 +387,34 @@ accelerate
 ```
 
 > `torch`/`diffusers`/`accelerate` só são necessários pra `generate_image`. No Windows com GPU, instale o `torch` com suporte CUDA **antes** de rodar `pip install -r requirements.txt` ([pytorch.org/get-started/locally](https://pytorch.org/get-started/locally)) — senão cai pra CPU automaticamente.
+>
+> `wasmtime` habilita o sandbox WASM do `run_python` — depois de instalar, rode `download_wasm_sandbox.bat` uma vez pra baixar o binário CPython/WASI (~26MB, não vai pro git).
 
 ---
 
 ## 🗺️ Roadmap
 
 ### v1.0 — Entregue ✅
-- [x] Tiered Memory (Redis + ChromaDB + Knowledge Graph)
+- [x] Tiered Memory (Redis + LanceDB + Knowledge Graph)
 - [x] Reflection Loop (critic LLM, score 1-5, retry automático)
 - [x] Multi-model por especialista (troca sem restart)
 - [x] Docker Sandbox para `run_python` (isolamento total)
+- [x] WASM sandbox para `run_python` (wasmtime + CPython/WASI) — boot quase instantâneo, preferido sobre Docker quando disponível
 - [x] Visual Browser (Playwright + VLM, screenshots inline no chat)
 - [x] NOC Dashboard — React Flow thought tree
 - [x] Human-in-the-Loop (pausa agente, usuário aprova/rejeita)
 
-### v1.1 — Próxima
+### v1.1 — Entregue ✅
 - [x] Geração de imagens — `generate_image` (Stable Diffusion local, sd-turbo, GPU com fallback CPU) — código pronto, imagem sai como markdown inline (mesmo padrão do `browser_tool`)
-- [ ] Exibir imagens geradas inline no chat (além de screenshots) — já funciona pra `generate_image`/`browser`; falta pro `generate_chart`
-- [ ] Export de conversa para Markdown/Obsidian
-- [ ] Auto-detect nível técnico do usuário por padrões de conversa
+- [x] Exibir imagens geradas inline no chat (além de screenshots) — `generate_chart` agora retorna markdown com `_img_url` também; endpoint `/workspace/img/` passou a aceitar subpasta (`charts/`)
+- [x] Export de conversa para Markdown/Obsidian — botão no header (`Download`) baixa a conversa como `.md` e salva cópia em `Agente IA/Conversas/` no Obsidian (`POST /export/conversation`); funciona mesmo sem Obsidian configurado (download local sempre acontece)
+- [x] Auto-detect nível técnico do usuário por padrões de conversa — heurística sem LLM (jargão técnico, blocos de código, frases de "não entendi") em `user_profile.py`, EMA de score ajusta `tech_level` a cada mensagem; para automaticamente se o usuário define o nível manualmente no perfil
 
 ### Futuro
-- [ ] LanceDB — substituir ChromaDB (mais rápido, serverless)
+- [x] LanceDB — substituiu ChromaDB (embutido/serverless, sem servidor separado) em `memory.py` (sessions/facts) e `rag.py` (pdf_chunks) — embeddings via `embeddings.py` (Ollama nomic-embed-text, fallback fastembed local), veja `migrate_chroma_to_lancedb.py` pra portar dados antigos
 - [ ] WhatsApp Business API
-- [ ] WASM sandbox (alternativa ao Docker — boot instantâneo)
-- [ ] Plugin marketplace (instalar tools por URL)
+- [x] WASM sandbox (alternativa ao Docker — boot instantâneo) — feito, ver Fase 4
+- [x] Plugin marketplace (design + sandboxing) — `plugin_manager.py`: instala manual (nunca o agente sozinho), hash SHA-256 pinado no manifest (bloqueia supply-chain attack se o código mudar após publicado), stage→approve como dois passos separados, execução dentro do sandbox WASM (`PLUGINS_ENABLED=False` por padrão). Falta: UI de instalação/descoberta de plugins — hoje é só CLI
 
 ---
 
@@ -397,8 +427,8 @@ Não obrigatório, mas recomendado. Com CPU funciona — só mais lento. `llama3
 Backend sim. Os `.bat` são Windows — no Mac/Linux use os comandos diretos do Python/npm.
 
 **Qual modelo usar?**
-- `llama3.2:3b` — mais rápido, bom para tarefas simples (2GB VRAM)
-- `qwen2.5:7b` — melhor qualidade geral (4.7GB VRAM)
+- `qwen2.5:7b` — recomendado, melhor qualidade geral e segue instrução composta (4.7GB VRAM)
+- `llama3.2:3b` — mais rápido mas ignora instrução composta com mais frequência, bom só pra tarefas simples (2GB VRAM)
 - `deepseek-r1:8b` — melhor raciocínio (5GB VRAM)
 - `moondream:1.8b` — VLM para visual browser (1.5GB VRAM, pull separado)
 - `nomic-embed-text` — embeddings locais para RAG (pull separado)

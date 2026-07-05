@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { Plus, Search, Trash2, MessageSquare, X, Bot, PenSquare } from 'lucide-react'
+import { Plus, Search, Trash2, MessageSquare, X, Bot, PenSquare, ImagePlus, BarChart3 } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
 import { cn } from '@/lib/utils'
 import type { Conversation } from '@/lib/types'
@@ -35,6 +35,8 @@ interface Props {
 
 export function Sidebar({ open, onClose }: Props) {
   const [search, setSearch] = useState('')
+  const [genType, setGenType] = useState<'image' | 'chart' | null>(null)
+  const [genText, setGenText] = useState('')
   const store = useChatStore()
 
   const filtered = useMemo(() => {
@@ -50,6 +52,23 @@ export function Sidebar({ open, onClose }: Props) {
 
   const handleNew = () => {
     store.newConversation()
+    onClose()
+  }
+
+  const openGenerate = (type: 'image' | 'chart') => {
+    setGenType(type)
+    setGenText('')
+  }
+
+  const handleGenerate = () => {
+    const text = genText.trim()
+    if (!text) return
+    if (!store.getActive()) store.newConversation()
+    const label = genType === 'image' ? `🎨 Gerar imagem: ${text.slice(0, 40)}` : `📊 Gerar gráfico: ${text.slice(0, 40)}`
+    const task  = genType === 'image' ? `Gere uma imagem: ${text}` : `Gere um gráfico: ${text}`
+    store.setPendingTemplateTask({ task, templateId: '', templateInputs: {}, displayLabel: label })
+    setGenType(null)
+    setGenText('')
     onClose()
   }
 
@@ -145,6 +164,12 @@ export function Sidebar({ open, onClose }: Props) {
           Nova conversa
         </button>
 
+        {/* Quick actions: image/chart generation */}
+        <div style={{ display: 'flex', gap: '6px', margin: '0 12px 10px' }}>
+          <QuickActionBtn icon={<ImagePlus size={13} />} label="Imagem" onClick={() => openGenerate('image')} />
+          <QuickActionBtn icon={<BarChart3 size={13} />} label="Gráfico" onClick={() => openGenerate('chart')} />
+        </div>
+
         {/* Conversation list */}
         <div className="flex-1 overflow-y-auto px-2 pb-4">
           {groups.length === 0 ? (
@@ -194,6 +219,81 @@ export function Sidebar({ open, onClose }: Props) {
           </span>
         </div>
       </aside>
+
+      {genType && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}
+          onClick={e => { if (e.target === e.currentTarget) setGenType(null) }}
+        >
+          <div
+            style={{
+              background: 'var(--surface)',
+              border: '1px solid var(--border-strong)',
+              borderRadius: 'var(--radius-lg)',
+              width: '100%',
+              maxWidth: '420px',
+              overflow: 'hidden',
+              boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
+            }}
+            className="anim-fade-up"
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+              <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {genType === 'image' ? <ImagePlus size={15} style={{ color: 'var(--accent)' }} /> : <BarChart3 size={15} style={{ color: 'var(--accent)' }} />}
+                {genType === 'image' ? 'Gerar Imagem' : 'Gerar Gráfico'}
+              </span>
+              <button onClick={() => setGenType(null)} style={{ color: 'var(--text-muted)', background: 'none', fontSize: '18px', lineHeight: 1, cursor: 'pointer' }}>×</button>
+            </div>
+            <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <textarea
+                autoFocus
+                value={genText}
+                onChange={e => setGenText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleGenerate() }}
+                placeholder={
+                  genType === 'image'
+                    ? 'Descreva a imagem: um gato astronauta, arte digital...'
+                    : 'Descreva o gráfico: barras com vendas Jan-Abr: 120, 150, 90, 200...'
+                }
+                rows={4}
+                style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  padding: '10px 12px',
+                  background: 'var(--surface-hover)',
+                  border: '1px solid var(--border-strong)',
+                  borderRadius: 'var(--radius-sm)',
+                  color: 'var(--text-primary)',
+                  fontSize: '13.5px',
+                  outline: 'none',
+                  resize: 'vertical',
+                  fontFamily: 'inherit',
+                  lineHeight: 1.5,
+                }}
+              />
+              <button
+                onClick={handleGenerate}
+                disabled={!genText.trim()}
+                style={{
+                  padding: '10px',
+                  background: genText.trim() ? 'var(--accent)' : 'var(--surface-active)',
+                  color: genText.trim() ? '#fff' : 'var(--text-muted)',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: '14px',
+                  fontWeight: 500,
+                  cursor: genText.trim() ? 'pointer' : 'not-allowed',
+                  transition: 'opacity 0.12s',
+                }}
+              >
+                Gerar
+              </button>
+              <p style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center' }}>
+                Ctrl+Enter para gerar
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
@@ -283,6 +383,48 @@ function ConvItem({
         </button>
       )}
     </div>
+  )
+}
+
+function QuickActionBtn({
+  icon, label, onClick
+}: {
+  icon: React.ReactNode
+  label: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '6px',
+        padding: '7px 8px',
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-sm)',
+        color: 'var(--text-secondary)',
+        fontSize: '12px',
+        fontWeight: 500,
+        transition: 'all 0.12s',
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.color = 'var(--accent)'
+        e.currentTarget.style.borderColor = 'rgba(99,102,241,0.35)'
+        e.currentTarget.style.background = 'var(--accent-glow)'
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.color = 'var(--text-secondary)'
+        e.currentTarget.style.borderColor = 'var(--border)'
+        e.currentTarget.style.background = 'var(--surface)'
+      }}
+    >
+      {icon}
+      {label}
+    </button>
   )
 }
 

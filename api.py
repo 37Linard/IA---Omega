@@ -229,19 +229,97 @@ async def sandbox_status():
     return get_sandbox_status()
 
 
-@app.get("/workspace/img/{filename}")
-async def serve_workspace_image(filename: str):
+@app.get("/workspace/img/{filepath:path}")
+async def serve_workspace_image(filepath: str):
     import re
     import os
-    if not re.match(r'^[\w\-]+\.(png|jpg|jpeg|webp|gif|bmp)$', filename):
-        raise HTTPException(status_code=400, detail="Nome invalido")
-    path = os.path.join(os.path.dirname(__file__), "workspace", filename)
+    # permite subpastas de 1 nivel (ex: "charts/foo.png") sem abrir path traversal —
+    # cada segmento so aceita \w/-, "." nao entra em segmento (bloqueia "..")
+    if not re.match(r'^[\w\-]+(/[\w\-]+)*\.(png|jpg|jpeg|webp|gif|bmp)$', filepath):
+        raise HTTPException(status_code=400, detail="Caminho invalido")
+    workspace_dir = os.path.join(os.path.dirname(__file__), "workspace")
+    path = os.path.normpath(os.path.join(workspace_dir, filepath))
+    if not path.startswith(os.path.normpath(workspace_dir) + os.sep):
+        raise HTTPException(status_code=400, detail="Caminho invalido")
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="Imagem nao encontrada")
-    ext  = filename.rsplit(".", 1)[-1].lower()
+    ext  = filepath.rsplit(".", 1)[-1].lower()
     mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
             "webp": "image/webp", "gif": "image/gif", "bmp": "image/bmp"}.get(ext, "image/png")
     return FileResponse(path, media_type=mime)
+
+
+def _build_conversation_markdown(title: str, messages: list) -> str:
+    from datetime import datetime
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    lines = [
+        "---",
+        f"criado: {now}",
+        "tags: [agente-ia, conversa]",
+        f"mensagens: {len(messages)}",
+        "---",
+        "",
+        f"# {title}",
+        "",
+        f"**Exportado em:** {now}  ",
+        f"**Mensagens:** {len(messages)}",
+        "",
+    ]
+    for m in messages:
+        role = "Usuário" if m.get("role") == "user" else "Agente"
+        content = str(m.get("content", "")).strip()
+        lines.append(f"## {role}")
+        lines.append("")
+        lines.append(content)
+        lines.append("")
+    return "\n".join(lines)
+
+
+@app.post("/export/conversation")
+async def export_conversation(body: dict, _rl=Depends(_check_rate_limit)):
+    """Exporta a conversa atual (mensagens vêm do frontend, que já mantém o
+    histórico completo) pra markdown. Sempre retorna o markdown pro frontend
+    baixar como arquivo, e tenta salvar uma cópia no Obsidian (best-effort —
+    segue o mesmo padrão silencioso de memory.py._export_to_obsidian)."""
+    import os
+    import re
+    import logging
+    from datetime import datetime
+    from config import OBSIDIAN_BASE
+
+    title = str(body.get("title") or "Conversa").strip()
+    messages = body.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise HTTPException(status_code=400, detail="'messages' vazio ou inválido")
+
+    markdown = _build_conversation_markdown(title, messages)
+    safe_title = re.sub(r'[<>:"/\\|?*]', '', title)[:60].strip() or "conversa"
+    filename = f"{safe_title}.md"
+
+    obsidian_path = None
+    try:
+        conv_dir = os.path.join(OBSIDIAN_BASE, "Agente IA", "Conversas")
+        os.makedirs(conv_dir, exist_ok=True)
+        date_prefix = datetime.now().strftime("%Y-%m-%d")
+        out_name = f"{date_prefix} — {safe_title}.md"
+        filepath = os.path.join(conv_dir, out_name)
+        if os.path.exists(filepath):
+            hour_suffix = datetime.now().strftime("%Hh%M")
+            out_name = f"{date_prefix} — {safe_title} ({hour_suffix}).md"
+            filepath = os.path.join(conv_dir, out_name)
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(markdown)
+        obsidian_path = filepath
+        filename = out_name
+    except Exception as e:
+        logging.getLogger(__name__).warning("export_conversation: falha ao salvar no Obsidian: %s", e)
+
+    return {
+        "markdown": markdown,
+        "filename": filename,
+        "obsidian_saved": obsidian_path is not None,
+        "obsidian_path": obsidian_path,
+    }
 
 
 @app.post("/upload")
@@ -396,6 +474,11 @@ async def update_profile(body: dict, _rl=Depends(_check_rate_limit)):
     p = UserProfile()
     allowed = {"name", "tech_level", "tone", "language"}
     updates = {k: v for k, v in body.items() if k in allowed and isinstance(v, str)}
+    if "tech_level" in updates:
+        # escolha manual do usuário — para de sobrescrever com auto-detecção
+        updates["tech_level_auto"] = False
+    if isinstance(body.get("tech_level_auto"), bool):
+        updates["tech_level_auto"] = body["tech_level_auto"]
     if updates:
         p.update(**updates)
     return p.to_dict()

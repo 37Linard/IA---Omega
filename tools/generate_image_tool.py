@@ -62,13 +62,18 @@ class GenerateImageTool:
         "Gera uma imagem a partir de uma descrição em texto, usando Stable Diffusion "
         "local (sem depender de API externa). Pode demorar — GPU: alguns segundos, "
         "CPU: 1-3 minutos, mais o tempo de carregar o modelo na 1ª chamada. "
-        'Input: {"prompt": "um gato astronauta, arte digital"}. '
+        'Input: {"prompt": "descrição do que a imagem deve conter"}. '
+        'IMPORTANTE: use so o conteudo pedido pelo usuario no prompt — NAO acrescente '
+        'estilo tipo "arte digital"/"pintura"/"ilustracao" por conta propria, isso faz '
+        'toda imagem sair parecendo pintura mesmo quando o usuario queria algo realista. '
+        'So inclua estilo se o usuario pedir um explicitamente (ex: "estilo aquarela", "foto realista"). '
         'Campos opcionais: "output" (nome do arquivo, padrão gerado por timestamp), '
         '"negative_prompt", "steps" (1-8), "width"/"height" (padrão 512).'
     )
 
     def run(self, params: dict) -> str:
-        prompt = params.get("prompt", "").strip()
+        # alguns modelos mandam "description" em vez de "prompt" — aceita os dois
+        prompt = (params.get("prompt") or params.get("description") or "").strip()
         if not prompt:
             return "Erro: forneça 'prompt' com a descrição da imagem."
 
