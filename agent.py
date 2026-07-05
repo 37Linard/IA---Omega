@@ -124,6 +124,7 @@ MAPEAMENTO DE TAREFAS â†’ FERRAMENTAS:
 - analisar imagem/foto/PNG/JPG â†’ analyze_image
 - ler planilha CSV/Excel â†’ read_spreadsheet
 - gerar gráfico/chart/visualização â†’ generate_chart
+- gerar/criar imagem, desenho, ilustração a partir de descrição → generate_image
 - buscar em PDF/documento indexado â†’ rag_search
 - criar nota no Notion â†’ notion
 - enviar mensagem no Slack â†’ slack
@@ -152,6 +153,7 @@ REGRAS CRÍTICAS:
 - NUNCA invente dados, preços ou resultados — aguarde a Observation real do sistema
 - NUNCA repita a mesma Action+Input se já recebeu observação com esse input
 - Use Final Answer quando tiver a resposta
+- Se a Observation contiver uma imagem em markdown (![...](url)), copie esse link EXATAMENTE na Final Answer — nao descreva o processo, MOSTRE a imagem
 - NUNCA cite fonte específica que não apareceu em Observation real
 - Para Bitcoin/Ethereum/cripto: use OBRIGATORIAMENTE get_crypto com {{"symbol": "bitcoin"}} — NUNCA get_currency para cripto
 """
@@ -778,6 +780,13 @@ class ReActAgent:
             if action == "Final Answer":
                 log.info("RESPOSTA FINAL: %s", action_input[:200])
 
+                # Modelos pequenos as vezes nao copiam o link de imagem da Observation
+                # pra Final Answer — forca a inclusao pra imagem aparecer no chat
+                if last_observation:
+                    img_match = re.search(r'!\[[^\]]*\]\([^)]+\)', last_observation)
+                    if img_match and img_match.group(0) not in action_input:
+                        action_input = action_input.rstrip() + "\n\n" + img_match.group(0)
+
                 # Reflection loop — critica antes de aceitar
                 if REFLECTION_ENABLED and not self._reflected:
                     self._reflected = True
@@ -817,6 +826,11 @@ class ReActAgent:
             log.info("EXECUTANDO: %s(%s)", action, action_input)
             emit({"type": "action", "content": f"{action}({json.dumps(action_input, ensure_ascii=False)})"})
 
+            if action == "generate_image":
+                emit({"type": "thought", "content": "🎨 Gerando imagem — pode levar alguns segundos..."})
+            elif action == "generate_chart":
+                emit({"type": "thought", "content": "📊 Gerando gráfico..."})
+
             observation = self._execute_tool(action, action_input)
             log.info("RESULTADO: %s", observation[:300])
             emit({"type": "observation", "content": observation})
@@ -841,6 +855,17 @@ class ReActAgent:
                 _tool_retry_counts.pop(retry_key, None)
                 last_observation = observation
                 self.scratchpad.append(f"Observation: {observation}")
+
+                # generate_image/generate_chart sao terminais — o entregavel eh o link da
+                # imagem, nao ha o que o LLM acrescente. Curto-circuita aqui pra evitar
+                # que o modelo pequeno repita a mesma chamada varias vezes (visto em teste)
+                if action in ("generate_image", "generate_chart") and re.search(r'!\[[^\]]*\]\([^)]+\)', observation):
+                    log.info("RESPOSTA FINAL (curto-circuito %s): %s", action, observation[:200])
+                    emit({"type": "final", "content": observation})
+                    self.memory.save_session_with_llm(task, observation[:200], self.scratchpad, self.llm, self.session_id)
+                    self.conversation = self.conversation[-4:]
+                    self.conversation.append({"task": task, "result": observation[:400]})
+                    return observation
 
         self._log_error(task, "max_steps", f"Atingiu {max_steps} steps sem Final Answer")
         emit({"type": "error", "content": "Limite de passos atingido."})

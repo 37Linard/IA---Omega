@@ -71,7 +71,7 @@ export async function ragDeleteDoc(fname: string): Promise<void> {
 }
 
 export async function fetchSandboxStatus(): Promise<{
-  mode: 'docker' | 'local'
+  mode: 'wasm' | 'docker' | 'local'
   docker: boolean
   image: string | null
   custom?: boolean
@@ -95,4 +95,14 @@ export async function setSpecialistModel(specialist: string, model: string): Pro
 
 export async function fetchTemplates(): Promise<{ templates: import('./templates').Template[] }> {
   return req('/templates')
+}
+
+export async function exportConversation(
+  title: string,
+  messages: Array<{ role: string; content: string }>
+): Promise<{ markdown: string; filename: string; obsidian_saved: boolean; obsidian_path: string | null }> {
+  return req('/export/conversation', {
+    method: 'POST',
+    body: JSON.stringify({ title, messages }),
+  })
 }

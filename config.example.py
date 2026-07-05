@@ -85,3 +85,7 @@ IMAGE_GEN_DEVICE         = "auto"   # "auto" | "cuda" | "cpu"
 IMAGE_GEN_STEPS          = 2
 IMAGE_GEN_SIZE           = 512
 IMAGE_GEN_GUIDANCE_SCALE = 0.0
+
+# -- Plugin marketplace (opcional, desligado por padrao) --------------------
+# Ver plugin_manager.py pro modelo de seguranca antes de habilitar.
+PLUGINS_ENABLED = False

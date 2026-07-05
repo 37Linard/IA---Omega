@@ -10,7 +10,7 @@ MAX_BACKUPS = 7
 FACT_TTL_DAYS = 30
 
 MEMORY_FILE = os.path.join(os.path.dirname(__file__), "agent_memory.json")
-CHROMA_DIR  = os.path.join(os.path.dirname(__file__), "workspace", "chroma_db")
+LANCE_MEMORY_DIR = os.path.join(os.path.dirname(__file__), "workspace", "lance_memory_db")
 
 from config import OBSIDIAN_BASE, REDIS_URL, SHORT_TERM_TTL, SHORT_TERM_MSGS
 OBSIDIAN_SESSIONS_DIR = os.path.join(OBSIDIAN_BASE, "Agente IA", "Sessões")
@@ -89,40 +89,26 @@ class ShortTermMemory:
 
 
 # ---------------------------------------------------------------------------
-# Vector Index — ChromaDB + nomic-embed-text (fallback: embedding padrão)
+# Vector Index — LanceDB (serverless, embutido) + embeddings.get_embedder()
 # ---------------------------------------------------------------------------
 class VectorIndex:
     def __init__(self, persist_dir: str):
         self._ok       = False
         self._embed_fn = None
-        self._suffix   = ""
         try:
-            import chromadb
-            from llm import OllamaEmbeddingFunction
-            from config import EMBED_MODEL, OLLAMA_URL
+            import vector_store
+            from embeddings import get_embedder
 
             os.makedirs(persist_dir, exist_ok=True)
-            self._client = chromadb.PersistentClient(path=persist_dir)
+            self._embed_fn, dim, kind = get_embedder()
+            db = vector_store.connect(persist_dir)
 
-            if OllamaEmbeddingFunction.is_available(EMBED_MODEL, OLLAMA_URL):
-                self._embed_fn = OllamaEmbeddingFunction(EMBED_MODEL, OLLAMA_URL)
-                self._suffix   = "_nomic"
-                log.info("VectorIndex: usando %s para embeddings", EMBED_MODEL)
-            else:
-                log.info("VectorIndex: %s indisponível — embedding padrão ChromaDB", EMBED_MODEL)
-
-            ef_kwargs = {"embedding_function": self._embed_fn} if self._embed_fn else {}
-            self._sessions = self._client.get_or_create_collection(
-                f"sessions{self._suffix}", **ef_kwargs
-            )
-            self._facts = self._client.get_or_create_collection(
-                f"facts{self._suffix}", **ef_kwargs
-            )
+            self._sessions = vector_store.LanceCollection(db, "sessions", dim)
+            self._facts    = vector_store.LanceCollection(db, "facts", dim)
             self._ok = True
-            log.info("VectorIndex: ChromaDB OK em %s (coleções: sessions%s, facts%s)",
-                     persist_dir, self._suffix, self._suffix)
+            log.info("VectorIndex: LanceDB OK em %s (embeddings=%s, dim=%d)", persist_dir, kind, dim)
         except Exception as e:
-            log.warning("VectorIndex: ChromaDB indisponível — %s", e)
+            log.warning("VectorIndex: LanceDB indisponível — %s", e)
 
     def _safe_n(self, collection, n: int) -> int:
         count = collection.count()
@@ -132,8 +118,10 @@ class VectorIndex:
         if not self._ok:
             return
         try:
+            vec = self._embed_fn([f"{task}\n{result}"])[0]
             self._sessions.upsert(
                 ids=[sid],
+                vectors=[vec],
                 documents=[f"{task}\n{result}"],
                 metadatas=[{"task": task[:300], "result": result[:500], "ts": timestamp}],
             )
@@ -144,8 +132,10 @@ class VectorIndex:
         if not self._ok:
             return
         try:
+            vec = self._embed_fn([text])[0]
             self._facts.upsert(
                 ids=[fid],
+                vectors=[vec],
                 documents=[text],
                 metadatas=[{"text": text, "created": created}],
             )
@@ -167,8 +157,9 @@ class VectorIndex:
         if k == 0:
             return []
         try:
-            res = self._sessions.query(query_texts=[query], n_results=k)
-            return res.get("metadatas", [[]])[0]
+            vec = self._embed_fn([query])[0]
+            hits = self._sessions.query(vec, k)
+            return [h["metadata"] for h in hits]
         except Exception as e:
             log.warning("VectorIndex.search_sessions: %s", e)
             return []
@@ -180,8 +171,9 @@ class VectorIndex:
         if k == 0:
             return []
         try:
-            res = self._facts.query(query_texts=[query], n_results=k)
-            return res.get("metadatas", [[]])[0]
+            vec = self._embed_fn([query])[0]
+            hits = self._facts.query(vec, k)
+            return [h["metadata"] for h in hits]
         except Exception as e:
             log.warning("VectorIndex.search_facts: %s", e)
             return []
@@ -193,7 +185,7 @@ class VectorIndex:
 class Memory:
     def __init__(self):
         self.data       = self._load()
-        self.index      = VectorIndex(CHROMA_DIR)
+        self.index      = VectorIndex(LANCE_MEMORY_DIR)
         self.short_term = ShortTermMemory()
         self._sync_index()
 

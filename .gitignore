@@ -15,6 +15,14 @@ workspace/
 *.db
 *.pkl
 
+
+# WASM sandbox — binario grande (~26MB), baixado via download_wasm_sandbox.bat
+sandbox_wasm/
+
+# Plugins de terceiros instalados via plugin_manager.py — codigo nao revisado
+# pelo projeto, nao deve ir pro git de ninguem
+plugins/
+
 # Arquivos de teste
 teste.txt
 test.txt

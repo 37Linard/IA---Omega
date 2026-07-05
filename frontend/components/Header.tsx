@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Menu, Sun, Moon, User, Heart, Cpu, Database, Trash2, FolderOpen, RefreshCw, CheckCircle, XCircle, Loader2, Layers, GitGraph, LayoutGrid, Workflow } from 'lucide-react'
+import { Menu, Sun, Moon, User, Heart, Cpu, Database, Trash2, FolderOpen, RefreshCw, CheckCircle, XCircle, Loader2, Layers, GitGraph, LayoutGrid, Workflow, Download } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
-import { fetchModels, setModel, fetchProfile, saveProfile, fetchRagDocs, ragIndexFolder, ragDeleteDoc, uploadFile, fetchMetrics, fetchSandboxStatus, fetchSpecialistModels, setSpecialistModel } from '@/lib/api'
+import { fetchModels, setModel, fetchProfile, saveProfile, fetchRagDocs, ragIndexFolder, ragDeleteDoc, uploadFile, fetchMetrics, fetchSandboxStatus, fetchSpecialistModels, setSpecialistModel, exportConversation } from '@/lib/api'
 import { ThoughtTree } from './ThoughtTree'
 import { WorkflowDAG } from './WorkflowDAG'
 import type { UserProfile } from '@/lib/types'
@@ -24,6 +24,7 @@ export function Header({ onToggleSidebar }: Props) {
   const [nocOpen,    setNocOpen]    = useState(false)
   const [workflowOpen, setWorkflowOpen] = useState(false)
   const [profile, setProfile] = useState<UserProfile | null>(null)
+  const [exportState, setExportState] = useState<'idle' | 'saving' | 'done' | 'error'>('idle')
 
   useEffect(() => {
     fetchModels().then(d => { setModels(d.models); setCurrentModel(d.current) }).catch(() => {})
@@ -33,6 +34,32 @@ export function Header({ onToggleSidebar }: Props) {
   const changeModel = async (m: string) => {
     setCurrentModel(m)
     try { await setModel(m) } catch {}
+  }
+
+  const handleExport = async () => {
+    if (!conv || conv.messages.length === 0 || exportState === 'saving') return
+    setExportState('saving')
+    try {
+      const messages = conv.messages
+        .filter(m => m.content.trim())
+        .map(m => ({ role: m.role, content: m.content }))
+      const res = await exportConversation(conv.title || 'Conversa', messages)
+
+      // download local sempre — funciona mesmo sem Obsidian configurado
+      const blob = new Blob([res.markdown], { type: 'text/markdown;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = res.filename
+      a.click()
+      URL.revokeObjectURL(url)
+
+      setExportState('done')
+    } catch {
+      setExportState('error')
+    } finally {
+      setTimeout(() => setExportState('idle'), 2500)
+    }
   }
 
   return (
@@ -107,6 +134,20 @@ export function Header({ onToggleSidebar }: Props) {
 
           <HeaderBtn onClick={() => router.push('/ferramentas')} title="Ferramentas IA — 25 ferramentas especializadas">
             <LayoutGrid size={15} />
+          </HeaderBtn>
+
+          <HeaderBtn
+            onClick={handleExport}
+            title={
+              exportState === 'done' ? 'Exportado! (baixado + salvo no Obsidian se configurado)'
+              : exportState === 'error' ? 'Erro ao exportar — backend disponível?'
+              : 'Exportar conversa (Markdown + Obsidian)'
+            }
+          >
+            {exportState === 'saving' ? <Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} />
+              : exportState === 'done' ? <CheckCircle size={15} style={{ color: '#4ade80' }} />
+              : exportState === 'error' ? <XCircle size={15} style={{ color: '#f87171' }} />
+              : <Download size={15} />}
           </HeaderBtn>
 
           <HeaderBtn onClick={() => setNocOpen(true)} title="NOC — Arvore de Raciocinio">
@@ -281,7 +322,7 @@ function ProfileModal({ profile, onSave, onClose }: { profile: UserProfile; onSa
 
 type Metrics = Awaited<ReturnType<typeof fetchMetrics>>
 
-type SandboxStatus = { mode: 'docker' | 'local'; docker: boolean; image: string | null; custom?: boolean; warning: string | null }
+type SandboxStatus = { mode: 'wasm' | 'docker' | 'local'; docker: boolean; image: string | null; custom?: boolean; warning: string | null }
 
 function HealthModal({ onClose }: { onClose: () => void }) {
   const [metrics, setMetrics] = useState<Metrics | null>(null)
@@ -380,37 +421,41 @@ function HealthModal({ onClose }: { onClose: () => void }) {
           )}
 
           {/* Sandbox status */}
-          {sandbox && (
-            <div>
-              <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)', marginBottom: '10px', letterSpacing: '0.05em' }}>SANDBOX — run_python</p>
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: '10px',
-                background: 'var(--surface-hover)', borderRadius: '8px', padding: '10px 14px',
-                border: `1px solid ${sandbox.mode === 'docker' && sandbox.custom ? '#4ade80' : sandbox.mode === 'docker' ? '#fbbf24' : '#f87171'}30`,
-              }}>
+          {sandbox && (() => {
+            const dotColor = sandbox.mode === 'wasm' ? '#4ade80'
+              : sandbox.mode === 'docker' ? (sandbox.custom ? '#4ade80' : '#fbbf24')
+              : '#f87171'
+            const label = sandbox.mode === 'wasm' ? 'WASM sandbox (wasmtime) — boot instantâneo'
+              : sandbox.mode === 'docker' ? (sandbox.custom ? 'Docker isolado (ia-sandbox)' : 'Docker isolado (python:3.12-slim)')
+              : 'Execução local (sem isolamento)'
+            return (
+              <div>
+                <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)', marginBottom: '10px', letterSpacing: '0.05em' }}>SANDBOX — run_python</p>
                 <div style={{
-                  width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
-                  background: sandbox.mode === 'docker' && sandbox.custom ? '#4ade80' : sandbox.mode === 'docker' ? '#fbbf24' : '#f87171',
-                }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ fontSize: '12px', color: 'var(--text-primary)', fontWeight: 500 }}>
-                    {sandbox.mode === 'docker'
-                      ? (sandbox.custom ? 'Docker isolado (ia-sandbox)' : 'Docker isolado (python:3.12-slim)')
-                      : 'Execucao local (sem isolamento)'}
-                  </p>
-                  {sandbox.image && (
-                    <p style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'monospace', marginTop: '2px' }}>{sandbox.image}</p>
-                  )}
-                  {sandbox.warning && (
-                    <p style={{ fontSize: '11px', color: '#fbbf24', marginTop: '4px', lineHeight: 1.4 }}>{sandbox.warning}</p>
-                  )}
-                  {!sandbox.warning && sandbox.custom && (
-                    <p style={{ fontSize: '11px', color: '#4ade80', marginTop: '2px' }}>numpy · pandas · matplotlib · scipy disponíveis</p>
-                  )}
+                  display: 'flex', alignItems: 'center', gap: '10px',
+                  background: 'var(--surface-hover)', borderRadius: '8px', padding: '10px 14px',
+                  border: `1px solid ${dotColor}30`,
+                }}>
+                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0, background: dotColor }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontSize: '12px', color: 'var(--text-primary)', fontWeight: 500 }}>{label}</p>
+                    {sandbox.image && (
+                      <p style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'monospace', marginTop: '2px' }}>{sandbox.image}</p>
+                    )}
+                    {sandbox.warning && (
+                      <p style={{ fontSize: '11px', color: '#fbbf24', marginTop: '4px', lineHeight: 1.4 }}>{sandbox.warning}</p>
+                    )}
+                    {!sandbox.warning && sandbox.mode === 'docker' && sandbox.custom && (
+                      <p style={{ fontSize: '11px', color: '#4ade80', marginTop: '2px' }}>numpy · pandas · matplotlib · scipy disponíveis</p>
+                    )}
+                    {sandbox.mode === 'wasm' && (
+                      <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>stdlib apenas — sem numpy/pandas (use Docker pra libs pesadas)</p>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )
+          })()}
 
           {/* Tool stats */}
           <div>

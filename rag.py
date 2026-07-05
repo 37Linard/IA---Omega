@@ -5,11 +5,9 @@ import os
 import pickle
 import re
 
-import chromadb
-
 log = logging.getLogger(__name__)
 
-RAG_DIR       = os.path.join(os.path.dirname(__file__), "workspace", "rag_db")
+RAG_DIR       = os.path.join(os.path.dirname(__file__), "workspace", "rag_lance_db")
 RAG_META      = os.path.join(os.path.dirname(__file__), "workspace", "rag_meta.json")
 BM25_CACHE    = os.path.join(os.path.dirname(__file__), "workspace", "bm25_cache.pkl")
 CHUNK_SIZE    = 500
@@ -95,18 +93,40 @@ class _BM25Store:
 
 
 # ---------------------------------------------------------------------------
-# RAGIndex — ChromaDB com coleção de chunks de PDF
+# RAGIndex — LanceDB (serverless) com coleção de chunks de documentos
 # ---------------------------------------------------------------------------
 class RAGIndex:
     def __init__(self):
         os.makedirs(RAG_DIR, exist_ok=True)
-        self._client     = chromadb.PersistentClient(path=RAG_DIR)
-        self._collection = self._client.get_or_create_collection(
-            "pdf_chunks",
-            metadata={"hnsw:space": "cosine"},
-        )
-        self._meta       = self._load_meta()
-        self._bm25       = _BM25Store()
+        self._ok       = False
+        self._embed_fn = None
+        try:
+            import vector_store
+            from embeddings import get_embedder
+            self._embed_fn, dim, kind = get_embedder()
+            db = vector_store.connect(RAG_DIR)
+            self._collection = vector_store.LanceCollection(db, "pdf_chunks", dim)
+            self._ok = True
+            log.info("RAG: LanceDB OK em %s (embeddings=%s, dim=%d)", RAG_DIR, kind, dim)
+        except Exception as e:
+            log.warning("RAG: LanceDB indisponível — busca semântica desativada, só BM25. %s", e)
+        self._meta = self._load_meta()
+        self._bm25 = _BM25Store()
+
+    # ------------------------------------------------------------------
+    def _upsert_chunks(self, ids: list[str], docs: list[str], metas: list[dict]):
+        if not self._ok:
+            return
+        batch = 100
+        for i in range(0, len(ids), batch):
+            batch_docs = docs[i:i + batch]
+            vectors = self._embed_fn(batch_docs)
+            self._collection.upsert(
+                ids=ids[i:i + batch],
+                vectors=vectors,
+                documents=batch_docs,
+                metadatas=metas[i:i + batch],
+            )
 
     # ------------------------------------------------------------------
     def _load_meta(self) -> dict:
@@ -172,15 +192,7 @@ class RAGIndex:
         if not chunks_ids:
             return {"status": "error", "file": fname, "error": "Nenhum texto extraído do PDF"}
 
-        # Indexa em lotes de 100 (limite do ChromaDB)
-        batch = 100
-        for i in range(0, len(chunks_ids), batch):
-            self._collection.upsert(
-                ids=chunks_ids[i:i+batch],
-                documents=chunks_docs[i:i+batch],
-                metadatas=chunks_meta[i:i+batch],
-            )
-
+        self._upsert_chunks(chunks_ids, chunks_docs, chunks_meta)
         self._bm25.add(chunks_docs, chunks_meta)
         self._meta["docs"][fname] = {
             "hash":   fhash,
@@ -194,46 +206,42 @@ class RAGIndex:
 
     # ------------------------------------------------------------------
     def _remove_doc(self, fname: str):
-        try:
-            existing = self._collection.get(where={"file": fname})
-            if existing["ids"]:
-                self._collection.delete(ids=existing["ids"])
-        except Exception as e:
-            log.warning("RAG._remove_doc: %s", e)
+        if self._ok:
+            try:
+                self._collection.delete_by_file(fname)
+            except Exception as e:
+                log.warning("RAG._remove_doc: %s", e)
         self._bm25.remove_file(fname)
 
     # ------------------------------------------------------------------
     def search(self, query: str, n: int = 5, file_filter: str | None = None) -> list[dict]:
-        """Busca híbrida: semântica (ChromaDB) + palavras-chave (BM25)."""
-        total = self._collection.count()
-        if total == 0:
-            return []
-        k = min(n * 2, total)
-
-        # ── Semantic search ──
-        where = {"file": file_filter} if file_filter else None
-        try:
-            kwargs: dict = {"query_texts": [query], "n_results": k}
-            if where:
-                kwargs["where"] = where
-            res = self._collection.query(**kwargs)
-        except Exception as e:
-            log.warning("RAG.search semantic: %s", e)
-            return []
-
+        """Busca híbrida: semântica (LanceDB) + palavras-chave (BM25).
+        Se o índice semântico estiver indisponível, degrada pra BM25-only
+        em vez de retornar vazio."""
         semantic_map: dict[str, dict] = {}
-        docs_s  = res.get("documents",  [[]])[0]
-        metas_s = res.get("metadatas",  [[]])[0]
-        dists_s = res.get("distances",  [[]])[0]
-        for doc, meta, dist in zip(docs_s, metas_s, dists_s):
-            sem_score = round(max(0.0, 1 - dist), 4)
-            semantic_map[doc] = {
-                "text":      doc,
-                "file":      meta.get("file", ""),
-                "page":      meta.get("page", 0),
-                "semantic":  sem_score,
-                "bm25":      0.0,
-            }
+
+        if self._ok:
+            total = self._collection.count()
+            if total > 0:
+                k = min(n * 2, total)
+                try:
+                    vec = self._embed_fn([query])[0]
+                    hits = self._collection.query(vec, k, file=file_filter)
+                    for h in hits:
+                        meta = h["metadata"]
+                        dist = h["distance"] or 0.0
+                        sem_score = round(max(0.0, 1 - dist), 4)
+                        semantic_map[h["document"]] = {
+                            "text":     h["document"],
+                            "file":     meta.get("file", ""),
+                            "page":     meta.get("page", 0),
+                            "semantic": sem_score,
+                            "bm25":     0.0,
+                        }
+                except Exception as e:
+                    log.warning("RAG.search semantic: %s", e)
+
+        k = n * 2
 
         # ── BM25 search ──
         for text, meta, bm25_score in self._bm25.search(query, n=k):
@@ -282,14 +290,7 @@ class RAGIndex:
         chunk_ids  = [f"{fname}__c{i}" for i in range(len(chunks_list))]
         chunk_meta = [{"file": fname, "page": 1, "chunk": i} for i in range(len(chunks_list))]
 
-        batch = 100
-        for i in range(0, len(chunk_ids), batch):
-            self._collection.upsert(
-                ids=chunk_ids[i:i+batch],
-                documents=chunks_list[i:i+batch],
-                metadatas=chunk_meta[i:i+batch],
-            )
-
+        self._upsert_chunks(chunk_ids, chunks_list, chunk_meta)
         self._bm25.add(chunks_list, chunk_meta)
         self._meta["docs"][fname] = {"hash": fhash, "path": path, "chunks": len(chunk_ids), "pages": 1}
         self._save_meta()
@@ -324,14 +325,7 @@ class RAGIndex:
         chunk_ids  = [f"{fname}__c{i}" for i in range(len(chunks_list))]
         chunk_meta = [{"file": fname, "page": 1, "chunk": i} for i in range(len(chunks_list))]
 
-        batch = 100
-        for i in range(0, len(chunk_ids), batch):
-            self._collection.upsert(
-                ids=chunk_ids[i:i+batch],
-                documents=chunks_list[i:i+batch],
-                metadatas=chunk_meta[i:i+batch],
-            )
-
+        self._upsert_chunks(chunk_ids, chunks_list, chunk_meta)
         self._bm25.add(chunks_list, chunk_meta)
         self._meta["docs"][fname] = {"hash": fhash, "path": path, "chunks": len(chunk_ids), "pages": 1}
         self._save_meta()

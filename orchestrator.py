@@ -64,8 +64,8 @@ SPECIALISTS = {
     },
     "visao": {
         "label": "Visão",
-        "tools": ["analyze_image", "screenshot"],
-        "hint":  "analisar imagem, foto, PNG, JPG, ver imagem, descrever imagem, ler texto em imagem, diagrama",
+        "tools": ["analyze_image", "screenshot", "generate_image"],
+        "hint":  "analisar imagem, foto, PNG, JPG, ver imagem, descrever imagem, ler texto em imagem, diagrama, gerar imagem, criar imagem, desenhar, ilustração, arte",
     },
     "professor": {
         "label": "Professor",

@@ -4,7 +4,7 @@ _HOME    = os.path.expanduser("~")
 _PROJECT = os.path.dirname(os.path.abspath(__file__))
 
 # ── Modelo Ollama ──────────────────────────────────────────────────────────
-OLLAMA_MODEL   = "llama3.2:3b"   # troque para qwen2.5:7b, mistral, deepseek, etc.
+OLLAMA_MODEL   = "qwen2.5:7b"   # trocado de llama3.2:3b (2026-07-04) — 3b ignorava instrucao, repetia tool call
 VISION_MODEL   = "moondream:1.8b"  # VLM local — cabe em 2GB VRAM (moondream:1.8b ou llava:7b)
 OLLAMA_URL     = "http://localhost:11434"
 API_URL        = "http://localhost:8000"  # URL base da API (usada por tools para gerar links de imagem)
@@ -101,6 +101,13 @@ SLACK_BOT_TOKEN   = os.environ.get("SLACK_BOT_TOKEN", "")
 # pra CPU automaticamente se faltar VRAM (ver tools/generate_image_tool.py).
 IMAGE_GEN_MODEL          = "stabilityai/sd-turbo"
 IMAGE_GEN_DEVICE         = "auto"   # "auto" | "cuda" | "cpu"
-IMAGE_GEN_STEPS          = 2        # sd-turbo: 1-4 passos ja da resultado bom
+IMAGE_GEN_STEPS          = 3        # sd-turbo: 1-4 passos ja da resultado bom
 IMAGE_GEN_SIZE           = 512
 IMAGE_GEN_GUIDANCE_SCALE = 0.0      # 0.0 pra modelos turbo (sem CFG); SD normal usa ~7.5
+
+# -- Plugin marketplace (opcional, desligado por padrao) --------------------
+# Instalar plugin e sempre acao manual via plugin_manager.py (nunca o agente
+# sozinho). Rodar plugin exige isso True E o plugin ja aprovado manualmente
+# (plugin_manager.py approve <nome>) -- ver docstring de plugin_manager.py
+# pro modelo de seguranca completo antes de habilitar.
+PLUGINS_ENABLED = False

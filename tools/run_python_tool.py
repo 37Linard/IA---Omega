@@ -1,11 +1,13 @@
 """
-run_python — executa código Python em sandbox Docker isolado.
-Hierarquia: ia-sandbox:latest → python:3.12-slim → execução local (aviso).
+run_python — executa código Python isolado.
+Hierarquia: WASM (wasmtime, boot quase instantâneo) → Docker (ia-sandbox
+→ python:3.12-slim) → execução local (aviso).
 """
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 _PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -17,6 +19,10 @@ MEM_LIMIT       = "256m"
 CPU_LIMIT       = "1.0"
 PIDS_LIMIT      = "64"
 MAX_OUTPUT      = 4000  # chars
+
+WASM_BINARY        = os.path.join(_PROJECT, "sandbox_wasm", "python-3.12.0.wasm")
+WASM_TIMEOUT       = 15                    # segundos
+WASM_MEM_LIMIT     = 256 * 1024 * 1024     # bytes — mesmo teto do Docker
 
 
 # ---------------------------------------------------------------------------
@@ -44,12 +50,24 @@ def _image_exists(image: str) -> bool:
         return False
 
 
+def _wasm_available() -> bool:
+    try:
+        import wasmtime  # noqa: F401
+    except ImportError:
+        return False
+    return os.path.isfile(WASM_BINARY)
+
+
 def get_sandbox_status() -> dict:
     """Usado pelo endpoint /sandbox/status da API."""
+    if _wasm_available():
+        return {"mode": "wasm", "docker": _docker_running(), "image": "python-3.12.0.wasm",
+                "custom": True, "warning": None}
+
     docker_ok = _docker_running()
     if not docker_ok:
         return {"mode": "local", "docker": False, "image": None,
-                "warning": "Docker nao disponivel — execucao direta no host"}
+                "warning": "Nem WASM (rode download_wasm_sandbox.bat) nem Docker disponiveis — execucao direta no host"}
     sandbox_ok = _image_exists(SANDBOX_IMAGE)
     image = SANDBOX_IMAGE if sandbox_ok else FALLBACK_IMAGE
     return {
@@ -59,6 +77,125 @@ def get_sandbox_status() -> dict:
         "custom": sandbox_ok,
         "warning": None if sandbox_ok else f"Imagem {SANDBOX_IMAGE} nao buildada — usando {FALLBACK_IMAGE}. Execute build_sandbox.bat.",
     }
+
+
+# ---------------------------------------------------------------------------
+# Execução WASM — CPython compilado pra WASI, via wasmtime
+# ---------------------------------------------------------------------------
+_wasm_engine = None
+_wasm_module = None
+_wasm_lock   = threading.Lock()
+
+
+def _get_wasm_module():
+    """Compila o módulo WASM uma única vez (custa ~1-2s) e cacheia em memória —
+    chamadas seguintes reusam o módulo compilado e só pagam o custo de
+    instanciar (poucos ms). É isso que dá o boot quase instantâneo comparado
+    ao Docker, que repaga o startup do container a cada `docker run`."""
+    global _wasm_engine, _wasm_module
+    if _wasm_module is not None:
+        return _wasm_engine, _wasm_module
+    with _wasm_lock:
+        if _wasm_module is None:
+            from wasmtime import Config, Engine, Module
+            cfg = Config()
+            cfg.epoch_interruption = True
+            _wasm_engine = Engine(cfg)
+            _wasm_module = Module.from_file(_wasm_engine, WASM_BINARY)
+    return _wasm_engine, _wasm_module
+
+
+def _read_and_unlink(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except Exception:
+        return ""
+    finally:
+        try:
+            os.unlink(path)
+        except Exception:
+            pass
+
+
+def _run_in_wasm(code: str, timeout_s: int = WASM_TIMEOUT) -> tuple[str, int, float]:
+    """Executa via CPython/WASI (wasmtime). Isolamento: sem rede (WASI não
+    expõe sockets por padrão), /workspace montado read-only, memória
+    limitada, timeout via epoch interruption — interrompe de dentro do
+    runtime, sem depender de matar processo externo (o que o Docker faz)."""
+    from wasmtime import DirPerms, ExitTrap, FilePerms, Linker, Store, Trap, TrapCode, WasiConfig
+
+    engine, module = _get_wasm_module()
+    store = Store(engine)
+    store.set_epoch_deadline(1)
+    store.set_limits(memory_size=WASM_MEM_LIMIT)
+
+    os.makedirs(WORKSPACE_DIR, exist_ok=True)
+    out_f = tempfile.NamedTemporaryFile(delete=False, suffix=".out")
+    err_f = tempfile.NamedTemporaryFile(delete=False, suffix=".err")
+    out_f.close()
+    err_f.close()
+
+    wasi = WasiConfig()
+    wasi.argv = ["python", "-c", code]
+    wasi.stdout_file = out_f.name
+    wasi.stderr_file = err_f.name
+    wasi.preopen_dir(os.path.abspath(WORKSPACE_DIR), "/workspace", DirPerms.READ_ONLY, FilePerms.READ_ONLY)
+    store.set_wasi(wasi)
+
+    linker = Linker(engine)
+    linker.define_wasi()
+
+    t0 = time.monotonic()
+    stop_ticking = threading.Event()
+
+    def ticker():
+        # single-shot: só incrementa o epoch (global, compartilhado entre chamadas)
+        # se a execução NAO terminou dentro do timeout — stop_ticking.set() no
+        # finally abaixo cancela isso pro caso comum (execução rápida normal).
+        # Incrementar sempre (mesmo em execução normal) vazaria pra próxima
+        # chamada, já que o epoch do Engine é compartilhado — foi um bug real
+        # detectado testando (2ª chamada dava timeout falso por causa disso).
+        if not stop_ticking.wait(timeout_s):
+            try:
+                engine.increment_epoch()
+            except Exception:
+                pass
+
+    threading.Thread(target=ticker, daemon=True).start()
+
+    exit_code = 0
+    timed_out = False
+    try:
+        instance = linker.instantiate(store, module)
+        start = instance.exports(store)["_start"]
+        start(store)
+    except ExitTrap as e:
+        exit_code = e.code
+    except Trap as e:
+        timed_out = e.trap_code == TrapCode.INTERRUPT
+        exit_code = 1
+    except Exception:
+        exit_code = 1
+    finally:
+        stop_ticking.set()
+
+    elapsed = round(time.monotonic() - t0, 2)
+    stdout = _read_and_unlink(out_f.name)
+    stderr = _read_and_unlink(err_f.name)
+
+    if timed_out:
+        return f"Erro: execucao excedeu {timeout_s}s.", 1, elapsed
+
+    parts = []
+    if stdout.strip():
+        parts.append(f"STDOUT:\n{stdout.strip()}")
+    if stderr.strip():
+        parts.append(f"STDERR:\n{stderr.strip()}")
+    output = "\n".join(parts) if parts else "Codigo executado sem saida."
+    if len(output) > MAX_OUTPUT:
+        output = output[:MAX_OUTPUT] + "\n[... saida truncada ...]"
+    return output, exit_code, elapsed
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +298,7 @@ def _run_local(code: str) -> tuple[str, int, float]:
 class RunPythonTool:
     name = "run_python"
     description = (
-        "Executa codigo Python em sandbox Docker isolado (sem rede, memoria limitada). "
+        "Executa codigo Python em sandbox isolado (sem rede, memoria limitada). "
         "Pode ler arquivos de /workspace. Retorna stdout/stderr. "
         "Input: {'code': 'print(1+1)'}"
     )
@@ -170,6 +307,15 @@ class RunPythonTool:
         code = input_data.get("code", "").strip()
         if not code:
             return "Erro: campo 'code' obrigatorio."
+
+        if _wasm_available():
+            try:
+                output, exit_code, elapsed = _run_in_wasm(code)
+                header = f"[sandbox: wasm | {elapsed}s | exit={exit_code}]"
+                return f"{header}\n{output}"
+            except Exception as e:
+                # WASM falhou de forma inesperada — cai pra Docker/local em vez de propagar erro
+                pass
 
         if _docker_running():
             image = SANDBOX_IMAGE if _image_exists(SANDBOX_IMAGE) else FALLBACK_IMAGE
