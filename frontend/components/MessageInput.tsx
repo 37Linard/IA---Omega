@@ -184,6 +184,7 @@ export function MessageInput({ onSend, onCancel, running, connected }: Props) {
           <button
             onClick={onCancel}
             title="Cancelar"
+            className="btn-press"
             style={{
               width: '32px',
               height: '32px',
@@ -206,6 +207,7 @@ export function MessageInput({ onSend, onCancel, running, connected }: Props) {
             onClick={send}
             disabled={!canSend}
             title="Enviar (Ctrl+Enter)"
+            className="btn-press"
             style={{
               width: '32px',
               height: '32px',

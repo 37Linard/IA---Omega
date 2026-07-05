@@ -144,6 +144,7 @@ export function Sidebar({ open, onClose }: Props) {
         {/* New chat shortcut */}
         <button
           onClick={handleNew}
+          className="btn-press"
           style={{
             margin: '2px 12px 8px',
             padding: '8px 12px',
@@ -222,7 +223,7 @@ export function Sidebar({ open, onClose }: Props) {
 
       {genType && (
         <div
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}
+          className="modal-backdrop"
           onClick={e => { if (e.target === e.currentTarget) setGenType(null) }}
         >
           <div
@@ -274,6 +275,7 @@ export function Sidebar({ open, onClose }: Props) {
               <button
                 onClick={handleGenerate}
                 disabled={!genText.trim()}
+                className="btn-press"
                 style={{
                   padding: '10px',
                   background: genText.trim() ? 'var(--accent)' : 'var(--surface-active)',

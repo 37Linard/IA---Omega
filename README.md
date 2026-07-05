@@ -1,4 +1,4 @@
-# 🤖 Agente IA Local — v1.1
+# 🤖 Agente IA Local — v1.2
 
 > Assistente de IA autônomo rodando **100% na sua máquina** — sem APIs externas, sem custos por token, sem dados saindo do seu PC.
 
@@ -6,6 +6,7 @@ Usa Ollama para inferência local, arquitetura ReAct para raciocínio passo a pa
 
 **v1.0** — Tiered Memory · Reflection Loop · Multi-model por especialista · WASM/Docker Sandbox · Visual Browser · NOC Dashboard + HITL
 **v1.1** — Geração de imagem local (SD-turbo) · LanceDB (substituiu ChromaDB) · Export de conversa pro Obsidian · Auto-detect de nível técnico · Plugin manager sandboxado
+**v1.2** — Fontes de pesquisa ao vivo no chat (busca/páginas em tempo real + citações) · `generate_image` com seed/múltiplas imagens/upscale · Refino visual do frontend
 
 ---
 
@@ -32,6 +33,7 @@ IA:   [Raciocínio] Vou buscar o preço, gerar o chart e salvar...
 - Chat estilo Claude/ChatGPT — dark mode, sidebar com histórico agrupado por data
 - Streaming token a token com cursor animado
 - **ThinkingSteps collapsível** — veja o raciocínio completo (Thought → Action → Observation)
+- **Pesquisa ao vivo com fontes** — enquanto o agente usa `web_search`/`fetch_page`, o painel abre sozinho e mostra "Pesquisando na web", nº de resultados e páginas abertas em tempo real; ao terminar, agrega tudo num painel **Fontes** (cards com título + domínio, sem duplicar URL)
 - **Auto-correção** — quando uma ferramenta falha, o agente analisa o erro e tenta novamente (até 3x)
 - Upload de arquivos, copiar resposta, regenerar, feedback 👍👎
 - Modo voz: fale para o agente (STT via Whisper) e ouça a resposta (TTS)
@@ -96,7 +98,7 @@ O agente decide sozinho qual usar baseado na tarefa.
 | **Arquivos** | `read_file`, `write_file`, `list_directory` |
 | **Código** | `run_python` (Docker sandbox), `run_sql`, `terminal` (sandboxed), `git` |
 | **Dados** | `read_spreadsheet` (CSV/Excel), `generate_chart` (matplotlib), `generate_report`, `rag_search`, `get_crypto` |
-| **Visão** | `analyze_image` (LLaVA multimodal), `generate_image` (Stable Diffusion local — sd-turbo) |
+| **Visão** | `analyze_image` (LLaVA multimodal), `generate_image` (Stable Diffusion local — sd-turbo, com seed/múltiplas imagens/upscale) |
 | **Memória** | `remember_fact`, `save_note` (Obsidian) |
 | **Computer Use** | `screenshot`, `keyboard`, `mouse`, `clipboard` |
 | **Integrações** | `email`, `notion`, `slack`, `google_drive`, `get_currency` |
@@ -234,8 +236,12 @@ SPECIALIST_MODELS = {
 }
 
 # Geração de imagem (generate_image) — requer pip install torch diffusers accelerate
-IMAGE_GEN_MODEL   = "stabilityai/sd-turbo"
-IMAGE_GEN_DEVICE  = "auto"          # "auto" | "cuda" | "cpu"
+IMAGE_GEN_MODEL       = "stabilityai/sd-turbo"
+IMAGE_GEN_DEVICE      = "auto"      # "auto" | "cuda" | "cpu"
+IMAGE_GEN_STEPS       = 3           # sd-turbo: 1-4 passos já dá resultado bom
+IMAGE_GEN_SIZE        = 512
+IMAGE_GEN_MAX_IMAGES  = 4           # limite de variações por chamada (num_images)
+IMAGE_GEN_MAX_UPSCALE = 4           # fator máximo de upscale (upscale_factor, Lanczos)
 
 # Autenticação (deixe vazio para desativar)
 AUTH_PASSWORD     = ""
@@ -409,6 +415,11 @@ accelerate
 - [x] Exibir imagens geradas inline no chat (além de screenshots) — `generate_chart` agora retorna markdown com `_img_url` também; endpoint `/workspace/img/` passou a aceitar subpasta (`charts/`)
 - [x] Export de conversa para Markdown/Obsidian — botão no header (`Download`) baixa a conversa como `.md` e salva cópia em `Agente IA/Conversas/` no Obsidian (`POST /export/conversation`); funciona mesmo sem Obsidian configurado (download local sempre acontece)
 - [x] Auto-detect nível técnico do usuário por padrões de conversa — heurística sem LLM (jargão técnico, blocos de código, frases de "não entendi") em `user_profile.py`, EMA de score ajusta `tech_level` a cada mensagem; para automaticamente se o usuário define o nível manualmente no perfil
+
+### v1.2 — Entregue ✅
+- [x] **Fontes de pesquisa ao vivo** — `frontend/lib/sources.ts` parseia `web_search`/`fetch_page` direto dos steps já emitidos (sem mudar o protocolo WS); painel de raciocínio abre sozinho durante a busca e mostra "Pesquisando/Pesquisado na web" + nº de resultados, "Página aberta" + domínio; painel **Fontes** agrega tudo no fim, deduplicado por URL
+- [x] `generate_image` — `seed` (reprodutível, testado hash idêntico), `num_images` (1-4 variações por chamada), `upscale_factor` (1-4, Lanczos pós-geração)
+- [x] Refino visual do frontend — modais com backdrop blur, header agrupado em clusters, avatar da IA pulsa durante streaming, feedback tátil em botões primários
 
 ### Futuro
 - [x] LanceDB — substituiu ChromaDB (embutido/serverless, sem servidor separado) em `memory.py` (sessions/facts) e `rag.py` (pdf_chunks) — embeddings via `embeddings.py` (Ollama nomic-embed-text, fallback fastembed local), veja `migrate_chroma_to_lancedb.py` pra portar dados antigos

@@ -68,7 +68,10 @@ class GenerateImageTool:
         'toda imagem sair parecendo pintura mesmo quando o usuario queria algo realista. '
         'So inclua estilo se o usuario pedir um explicitamente (ex: "estilo aquarela", "foto realista"). '
         'Campos opcionais: "output" (nome do arquivo, padrão gerado por timestamp), '
-        '"negative_prompt", "steps" (1-8), "width"/"height" (padrão 512).'
+        '"negative_prompt", "steps" (1-8), "width"/"height" (padrão 512), '
+        '"seed" (int — reproduz a mesma imagem se repetido), '
+        '"num_images" (1-4 — gera variações na mesma chamada), '
+        '"upscale_factor" (1-4 — amplia a imagem final, ex: 2 dobra a resolução).'
     )
 
     def run(self, params: dict) -> str:
@@ -85,8 +88,12 @@ class GenerateImageTool:
             safe_output = re.sub(r'[^\w\-.]', '_', safe_output)
             if not safe_output.lower().endswith((".png", ".jpg", ".jpeg")):
                 safe_output += ".png"
+        base_name, ext = os.path.splitext(safe_output)
 
-        from config import IMAGE_GEN_STEPS, IMAGE_GEN_SIZE, IMAGE_GEN_GUIDANCE_SCALE
+        from config import (
+            IMAGE_GEN_STEPS, IMAGE_GEN_SIZE, IMAGE_GEN_GUIDANCE_SCALE,
+            IMAGE_GEN_MAX_IMAGES, IMAGE_GEN_MAX_UPSCALE,
+        )
 
         try:
             steps = max(1, min(int(params.get("steps", IMAGE_GEN_STEPS)), 8))
@@ -97,6 +104,19 @@ class GenerateImageTool:
             height = int(params.get("height", IMAGE_GEN_SIZE))
         except (TypeError, ValueError):
             width = height = IMAGE_GEN_SIZE
+        try:
+            num_images = max(1, min(int(params.get("num_images", 1)), IMAGE_GEN_MAX_IMAGES))
+        except (TypeError, ValueError):
+            num_images = 1
+        try:
+            upscale_factor = max(1, min(int(params.get("upscale_factor", 1)), IMAGE_GEN_MAX_UPSCALE))
+        except (TypeError, ValueError):
+            upscale_factor = 1
+        seed_param = params.get("seed")
+        try:
+            base_seed = int(seed_param) if seed_param is not None else None
+        except (TypeError, ValueError):
+            base_seed = None
 
         try:
             pipe, device = _get_pipeline()
@@ -106,32 +126,54 @@ class GenerateImageTool:
                 "Instale as dependências: pip install torch diffusers accelerate"
             )
 
+        import torch
+        from PIL import Image
+
+        generator_device = "cuda" if device == "cuda" else "cpu"
+        os.makedirs(WORKSPACE_DIR, exist_ok=True)
+
+        results = []
         try:
-            kwargs = dict(
-                prompt=prompt,
-                num_inference_steps=steps,
-                width=width,
-                height=height,
-                guidance_scale=IMAGE_GEN_GUIDANCE_SCALE,
-            )
-            if negative_prompt:
-                kwargs["negative_prompt"] = negative_prompt
+            for i in range(num_images):
+                seed = (base_seed if base_seed is not None else torch.seed()) + i
+                generator = torch.Generator(device=generator_device).manual_seed(seed)
 
-            result = pipe(**kwargs)
-            image = result.images[0]
+                kwargs = dict(
+                    prompt=prompt,
+                    num_inference_steps=steps,
+                    width=width,
+                    height=height,
+                    guidance_scale=IMAGE_GEN_GUIDANCE_SCALE,
+                    generator=generator,
+                )
+                if negative_prompt:
+                    kwargs["negative_prompt"] = negative_prompt
 
-            os.makedirs(WORKSPACE_DIR, exist_ok=True)
-            filepath = os.path.join(WORKSPACE_DIR, safe_output)
-            image.save(filepath)
+                image = pipe(**kwargs).images[0]
+
+                if upscale_factor > 1:
+                    image = image.resize(
+                        (width * upscale_factor, height * upscale_factor), Image.LANCZOS
+                    )
+
+                file_name = safe_output if num_images == 1 else f"{base_name}_{i+1}{ext}"
+                filepath = os.path.join(WORKSPACE_DIR, file_name)
+                image.save(filepath)
+                results.append((file_name, seed))
         except Exception as e:
             return f"Erro ao gerar imagem: {e}"
 
-        try:
-            from tools.browser_tool import _img_url
-            url = _img_url(safe_output)
-        except Exception:
-            from config import API_URL
-            url = f"{API_URL}/workspace/img/{safe_output}"
+        def _url_for(name):
+            try:
+                from tools.browser_tool import _img_url
+                return _img_url(name)
+            except Exception:
+                from config import API_URL
+                return f"{API_URL}/workspace/img/{name}"
 
-        log.info("Imagem gerada (%s): %s", device, filepath)
-        return f"Imagem gerada ({device}) e salva em workspace/{safe_output}.\n![{prompt}]({url})"
+        log.info("Imagem(ns) gerada(s) (%s): %s", device, [r[0] for r in results])
+
+        lines = [f"Imagem(ns) gerada(s) ({device}), seed inicial {results[0][1]}:"]
+        for file_name, seed in results:
+            lines.append(f"![{prompt}]({_url_for(file_name)})  \nworkspace/{file_name} — seed {seed}")
+        return "\n\n".join(lines)

@@ -1,14 +1,15 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Copy, Check, RefreshCw, ThumbsUp, ThumbsDown, Bot, User } from 'lucide-react'
+import { Copy, Check, RefreshCw, ThumbsUp, ThumbsDown, Bot, User, Link2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { CodeBlock } from './CodeBlock'
 import { ThinkingSteps } from './ThinkingSteps'
 import { useChatStore } from '@/store/chatStore'
 import type { Message } from '@/lib/types'
+import { extractSources, hostnameOf } from '@/lib/sources'
 
 interface Props {
   message: Message
@@ -38,6 +39,7 @@ export function MessageBubble({ message, onRegenerate }: Props) {
   const isUser = message.role === 'user'
   const isStreaming = message.isStreaming
   const hasContent = message.content.length > 0
+  const sources = useMemo(() => extractSources(message.steps), [message.steps])
 
   const copy = () => {
     navigator.clipboard.writeText(message.content).then(() => {
@@ -99,6 +101,7 @@ export function MessageBubble({ message, onRegenerate }: Props) {
     <div className="anim-fade-up flex gap-3 group">
       {/* Avatar */}
       <div
+        className={isStreaming ? 'anim-pulse-glow' : undefined}
         style={{
           width: '32px',
           height: '32px',
@@ -109,8 +112,9 @@ export function MessageBubble({ message, onRegenerate }: Props) {
           justifyContent: 'center',
           flexShrink: 0,
           marginTop: '2px',
-          boxShadow: '0 0 0 3px var(--accent-glow)',
-        }}
+          boxShadow: isStreaming ? undefined : '0 0 0 3px var(--accent-glow)',
+          '--pulse-color': '#6366f1',
+        } as React.CSSProperties}
       >
         <Bot size={14} className="text-white" />
       </div>
@@ -123,6 +127,8 @@ export function MessageBubble({ message, onRegenerate }: Props) {
           streamingThought={message.streamingThought}
           isStreaming={isStreaming && !hasContent}
         />
+
+        {sources.length > 0 && <SourcesPanel sources={sources} />}
 
         {/* Loading dots (no content yet, no steps) */}
         {!hasContent && !message.steps.length && !message.streamingThought && isStreaming && (
@@ -238,6 +244,83 @@ export function MessageBubble({ message, onRegenerate }: Props) {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function SourcesPanel({ sources }: { sources: { title: string; url: string }[] }) {
+  const [open, setOpen] = useState(true)
+  return (
+    <div style={{ marginBottom: '14px' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          fontSize: '12px',
+          color: 'var(--text-muted)',
+          background: 'transparent',
+          padding: '2px 0 8px',
+        }}
+      >
+        <Link2 size={12} style={{ color: '#818cf8' }} />
+        <span style={{ fontWeight: 500 }}>
+          Fontes &middot; {sources.length}
+        </span>
+      </button>
+
+      {open && (
+        <div
+          className="anim-fade-in"
+          style={{
+            display: 'flex',
+            gap: '8px',
+            overflowX: 'auto',
+            paddingBottom: '2px',
+          }}
+        >
+          {sources.map((src, i) => (
+            <a
+              key={src.url}
+              href={src.url}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                flexShrink: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '4px',
+                width: '168px',
+                textDecoration: 'none',
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-sm)',
+                padding: '9px 11px',
+                transition: 'border-color 0.15s, background 0.15s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.35)'; e.currentTarget.style.background = 'var(--surface-hover)' }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'var(--surface)' }}
+            >
+              <span
+                style={{
+                  fontSize: '12.5px',
+                  fontWeight: 500,
+                  color: 'var(--text-primary)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {i + 1}. {src.title}
+              </span>
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {hostnameOf(src.url)}
+              </span>
+            </a>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

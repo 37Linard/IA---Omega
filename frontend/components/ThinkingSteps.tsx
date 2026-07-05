@@ -1,8 +1,9 @@
 'use client'
 
-import { useState } from 'react'
-import { ChevronRight, Brain, Zap, Eye, AlertCircle, Bot, Loader2, RefreshCw, ShieldCheck, ShieldAlert } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronRight, Brain, Zap, Eye, AlertCircle, Bot, Loader2, RefreshCw, ShieldCheck, ShieldAlert, Search, Globe } from 'lucide-react'
 import type { AgentStep } from '@/lib/types'
+import { parseActionCall, countSearchResults, hostnameOf } from '@/lib/sources'
 
 const CFG = {
   thought:      { Icon: Brain,        label: 'Raciocínio',   color: '#818cf8', bg: 'rgba(99,102,241,0.08)', border: 'rgba(99,102,241,0.2)' },
@@ -112,6 +113,94 @@ function StepRow({ step }: { step: AgentStep }) {
   )
 }
 
+function SearchStepRow({ query, count }: { step: AgentStep; query: string; count?: number }) {
+  const pending = count === undefined
+  return (
+    <div
+      style={{
+        display: 'flex', alignItems: 'center', gap: '8px',
+        background: 'rgba(34,211,238,0.08)', border: '1px solid rgba(34,211,238,0.2)',
+        borderRadius: '8px', padding: '7px 10px',
+      }}
+    >
+      {pending
+        ? <Loader2 size={12} style={{ color: '#22d3ee', flexShrink: 0, animation: 'spin 1s linear infinite' }} />
+        : <Search size={12} style={{ color: '#22d3ee', flexShrink: 0 }} />}
+      <span style={{ fontSize: '11.5px', fontWeight: 600, color: '#22d3ee', flexShrink: 0 }}>
+        {pending ? 'Pesquisando na web' : 'Pesquisado na web'}
+      </span>
+      <span style={{ fontSize: '12px', color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {query}
+      </span>
+      {!pending && (
+        <span style={{ fontSize: '10.5px', color: '#22d3ee', background: 'rgba(34,211,238,0.15)', borderRadius: '99px', padding: '1px 7px', flexShrink: 0 }}>
+          {count}
+        </span>
+      )}
+    </div>
+  )
+}
+
+function OpenPageStepRow({ url, hostname, pending }: { url: string; hostname: string; pending: boolean }) {
+  const Tag = pending ? 'div' : 'a'
+  return (
+    <Tag
+      {...(pending ? {} : { href: url, target: '_blank', rel: 'noreferrer' })}
+      style={{
+        display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none',
+        background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.2)',
+        borderRadius: '8px', padding: '7px 10px',
+      }}
+    >
+      {pending
+        ? <Loader2 size={12} style={{ color: '#a78bfa', flexShrink: 0, animation: 'spin 1s linear infinite' }} />
+        : <Globe size={12} style={{ color: '#a78bfa', flexShrink: 0 }} />}
+      <span style={{ fontSize: '11.5px', fontWeight: 600, color: '#a78bfa', flexShrink: 0 }}>
+        {pending ? 'Abrindo página' : 'Página aberta'}
+      </span>
+      <span style={{ fontSize: '12px', color: 'var(--text-muted)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {hostname}
+      </span>
+    </Tag>
+  )
+}
+
+type RenderItem =
+  | { kind: 'search'; step: AgentStep; query: string; count?: number }
+  | { kind: 'open'; step: AgentStep; url: string; hostname: string; pending: boolean }
+  | { kind: 'default'; step: AgentStep }
+
+function buildRenderItems(steps: AgentStep[]): RenderItem[] {
+  const items: RenderItem[] = []
+  const skip = new Set<number>()
+
+  steps.forEach((step, i) => {
+    if (skip.has(i)) return
+    if (step.type === 'action') {
+      const parsed = parseActionCall(step.content)
+      const nextObs = steps[i + 1]
+
+      if (parsed?.tool === 'web_search') {
+        const query = typeof parsed.input.query === 'string' ? parsed.input.query : step.content
+        const count = nextObs?.type === 'observation' ? countSearchResults(nextObs.content) : undefined
+        if (nextObs?.type === 'observation') skip.add(i + 1)
+        items.push({ kind: 'search', step, query, count })
+        return
+      }
+      if (parsed?.tool === 'fetch_page') {
+        const url = typeof parsed.input.url === 'string' ? parsed.input.url : ''
+        const pending = nextObs?.type !== 'observation'
+        if (nextObs?.type === 'observation') skip.add(i + 1)
+        items.push({ kind: 'open', step, url, hostname: hostnameOf(url), pending })
+        return
+      }
+    }
+    items.push({ kind: 'default', step })
+  })
+
+  return items
+}
+
 interface Props {
   steps: AgentStep[]
   streamingThought?: string
@@ -120,12 +209,21 @@ interface Props {
 
 export function ThinkingSteps({ steps, streamingThought, isStreaming }: Props) {
   const [open, setOpen] = useState(false)
+  const userToggled = useRef(false)
+  const items = useMemo(() => buildRenderItems(steps), [steps])
+
+  // Enquanto a IA esta pesquisando, abre sozinho pra mostrar o processo ao vivo;
+  // ao terminar, recolhe de volta — a nao ser que o usuario ja tenha mexido no toggle.
+  useEffect(() => {
+    if (!userToggled.current) setOpen(isStreaming ?? false)
+  }, [isStreaming])
+
   if (!steps.length && !streamingThought) return null
 
   return (
     <div style={{ marginBottom: '12px' }}>
       <button
-        onClick={() => setOpen(o => !o)}
+        onClick={() => { userToggled.current = true; setOpen(o => !o) }}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -160,7 +258,11 @@ export function ThinkingSteps({ steps, streamingThought, isStreaming }: Props) {
 
       {open && (
         <div className="anim-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          {steps.map(s => <StepRow key={s.id} step={s} />)}
+          {items.map(item =>
+            item.kind === 'search' ? <SearchStepRow key={item.step.id} step={item.step} query={item.query} count={item.count} />
+            : item.kind === 'open' ? <OpenPageStepRow key={item.step.id} url={item.url} hostname={item.hostname} pending={item.pending} />
+            : <StepRow key={item.step.id} step={item.step} />
+          )}
           {streamingThought && (
             <div
               style={{

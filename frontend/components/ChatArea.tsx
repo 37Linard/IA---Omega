@@ -139,6 +139,7 @@ function EmptyState({
     >
       {/* Logo */}
       <div
+        className="anim-float"
         style={{
           width: '64px',
           height: '64px',
@@ -191,17 +192,13 @@ function EmptyState({
 
       {/* Suggestions grid */}
       <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(2, 1fr)',
-          gap: '10px',
-          maxWidth: '600px',
-          width: '100%',
-        }}
+        className="grid grid-cols-1 sm:grid-cols-2 gap-2.5"
+        style={{ maxWidth: '600px', width: '100%' }}
       >
         {SUGGESTIONS.map(({ icon: Icon, text }) => (
           <button
             key={text}
+            className="btn-press"
             onClick={() => onSuggestion(text)}
             disabled={!connected}
             style={{

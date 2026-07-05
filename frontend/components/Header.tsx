@@ -70,10 +70,15 @@ export function Header({ onToggleSidebar }: Props) {
           alignItems: 'center',
           gap: '12px',
           padding: '10px 16px',
-          background: 'var(--sidebar-bg)',
+          background: 'rgba(23,23,23,0.82)',
+          backdropFilter: 'blur(10px)',
+          WebkitBackdropFilter: 'blur(10px)',
           borderBottom: '1px solid var(--border)',
           flexShrink: 0,
           minHeight: '52px',
+          position: 'sticky',
+          top: 0,
+          zIndex: 20,
         }}
       >
         {/* Mobile menu toggle */}
@@ -150,6 +155,8 @@ export function Header({ onToggleSidebar }: Props) {
               : <Download size={15} />}
           </HeaderBtn>
 
+          <HeaderDivider />
+
           <HeaderBtn onClick={() => setNocOpen(true)} title="NOC — Arvore de Raciocinio">
             <GitGraph size={15} />
           </HeaderBtn>
@@ -162,6 +169,8 @@ export function Header({ onToggleSidebar }: Props) {
             <Layers size={15} />
           </HeaderBtn>
 
+          <HeaderDivider />
+
           <HeaderBtn onClick={() => setRagOpen(true)} title="Indexação de documentos (RAG)">
             <Database size={15} />
           </HeaderBtn>
@@ -169,6 +178,8 @@ export function Header({ onToggleSidebar }: Props) {
           <HeaderBtn onClick={() => setProfileOpen(true)} title="Perfil">
             <User size={15} />
           </HeaderBtn>
+
+          <HeaderDivider />
 
           <HeaderBtn onClick={() => setHealthOpen(true)} title="Status do sistema">
             <Heart size={15} />
@@ -205,6 +216,7 @@ export function Header({ onToggleSidebar }: Props) {
 function HeaderBtn({ onClick, title, children }: { onClick: () => void; title: string; children: React.ReactNode }) {
   return (
     <button
+      className="btn-press"
       onClick={onClick}
       title={title}
       style={iconBtnStyle}
@@ -214,6 +226,10 @@ function HeaderBtn({ onClick, title, children }: { onClick: () => void; title: s
       {children}
     </button>
   )
+}
+
+function HeaderDivider() {
+  return <div style={{ width: '1px', height: '18px', background: 'var(--border)', margin: '0 2px', flexShrink: 0 }} />
 }
 
 const iconBtnStyle: React.CSSProperties = {
@@ -236,7 +252,7 @@ function applyHover(e: React.MouseEvent<HTMLButtonElement>, on: boolean) {
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}
+      className="modal-backdrop"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
       <div
@@ -351,7 +367,7 @@ function HealthModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}
+      className="modal-backdrop"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
       <div
@@ -562,7 +578,7 @@ function RagModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}
+      className="modal-backdrop"
       onClick={e => { if (e.target === e.currentTarget) onClose() }}
     >
       <div
