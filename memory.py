@@ -251,14 +251,6 @@ class Memory:
             self.short_term.add_message(session_id, "user", task)
             self.short_term.add_message(session_id, "assistant", result)
 
-        # Extrai entidades para knowledge graph em background
-        combined = f"Pergunta: {task}\nResposta: {result}"
-        import threading
-        threading.Thread(
-            target=lambda: self.kg._extract(combined, None),  # sem LLM — só armazena
-            daemon=True
-        ).start()
-
     def save_session_with_llm(self, task: str, result: str, scratchpad: list, llm, session_id: str = ""):
         """Igual a save_session mas extrai knowledge graph com LLM."""
         self.save_session(task, result, scratchpad, session_id)

@@ -66,6 +66,7 @@ export interface Conversation {
 export interface UserProfile {
   name: string
   tech_level: 'iniciante' | 'intermediário' | 'avançado' | 'especialista'
+  tech_level_auto: boolean
   tone: 'informal' | 'neutro' | 'formal' | 'técnico'
   language: string
   interactions: number

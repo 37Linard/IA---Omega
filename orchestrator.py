@@ -174,13 +174,16 @@ class OrchestratorAgent:
     _llm_cache: dict[str, object] = {}  # model_name → OllamaLLM (shared across instances)
 
     def __init__(self, llm, all_tools: list, session_id: str = ""):
-        self.llm        = llm
-        self.all_tools  = {t.name: t for t in all_tools} if isinstance(all_tools, list) else all_tools
-        self.memory     = Memory()
-        self.session_id = session_id
-        self._cancel    = threading.Event()
-        self._active    = []
-        self._lock      = threading.Lock()
+        from user_profile import UserProfile
+        self.llm            = llm
+        self.all_tools      = {t.name: t for t in all_tools} if isinstance(all_tools, list) else all_tools
+        self.memory         = Memory()
+        self.profile        = UserProfile()
+        self.session_id     = session_id
+        self._cancel        = threading.Event()
+        self._cancel_reason = "usuário"
+        self._active        = []
+        self._lock          = threading.Lock()
         # Registra o llm padrão no cache
         OrchestratorAgent._llm_cache[llm.model] = llm
 
@@ -192,14 +195,16 @@ class OrchestratorAgent:
             log.info("LLM cache MISS — criando OllamaLLM(%s)", model)
         return OrchestratorAgent._llm_cache[model]
 
-    def cancel(self):
+    def cancel(self, reason: str = "usuário"):
+        self._cancel_reason = reason
         self._cancel.set()
         with self._lock:
             for agent in self._active:
-                agent.cancel()
+                agent.cancel(reason=reason)
 
     def reset_cancel(self):
         self._cancel.clear()
+        self._cancel_reason = "usuário"
         with self._lock:
             self._active.clear()
 
@@ -438,14 +443,16 @@ class OrchestratorAgent:
 
     def _run_conversational(self, task: str, step_callback=None) -> str:
         from datetime import datetime
-        from user_profile import UserProfile
 
         def emit(data):
             if step_callback:
                 step_callback(data)
 
+        self.profile.observe_message(task)
+        self.profile.increment_interactions()
+
         now     = datetime.now().strftime("%d/%m/%Y %H:%M, %A")
-        profile = UserProfile().get_system_context()
+        profile = self.profile.get_system_context()
         conv    = self.memory.get_context(task, session_id=self.session_id)
 
         prompt = (
@@ -476,6 +483,7 @@ class OrchestratorAgent:
         resposta = resposta.strip()
         emit({"type": "final", "content": resposta})
         emit({"type": "done", "content": ""})
+        self.memory.save_session_with_llm(task, resposta[:200], [], self.llm, self.session_id)
         log.info("MODO CONVERSA: %s → %s chars", task[:50], len(resposta))
         return resposta
 

@@ -474,7 +474,7 @@ async def update_profile(body: dict, _rl=Depends(_check_rate_limit)):
     p = UserProfile()
     allowed = {"name", "tech_level", "tone", "language"}
     updates = {k: v for k, v in body.items() if k in allowed and isinstance(v, str)}
-    if "tech_level" in updates:
+    if "tech_level" in updates and updates["tech_level"] != p.data.get("tech_level"):
         # escolha manual do usuário — para de sobrescrever com auto-detecção
         updates["tech_level_auto"] = False
     if isinstance(body.get("tech_level_auto"), bool):
@@ -532,7 +532,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             def run_agent():
                 llm.reset_tokens()
-                timer = threading.Timer(TASK_TIMEOUT, lambda: agent.cancel())
+                timer = threading.Timer(TASK_TIMEOUT, lambda: agent.cancel(reason="timeout"))
                 timer.start()
                 try:
                     agent.run(task, step_callback=sync_callback)

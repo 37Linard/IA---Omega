@@ -22,6 +22,7 @@ NUM_PREDICT       = 700    # tokens por step (baixo → trunca → parse error �
 NUM_CTX           = 4096   # context window em tokens
 NUM_GPU           = -1     # -1 = todas as camadas na GPU (auto)
 TEMPERATURE       = 0.1
+KEEP_ALIVE        = "30m"  # Ollama descarrega modelo após 5min ocioso por padrão — evita recarregar 7B a cada pausa
 
 TOOL_TIMEOUT      = 30     # segundos máximos por ferramenta (padrão)
 TOOL_TIMEOUTS: dict = {    # overrides por ferramenta — usa TOOL_TIMEOUT se não listada aqui

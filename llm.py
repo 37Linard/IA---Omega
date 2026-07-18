@@ -2,7 +2,7 @@ import json
 import logging
 import time
 import requests
-from config import OLLAMA_URL, NUM_PREDICT, NUM_CTX, NUM_GPU, TEMPERATURE, VISION_MODEL
+from config import OLLAMA_URL, NUM_PREDICT, NUM_CTX, NUM_GPU, TEMPERATURE, VISION_MODEL, KEEP_ALIVE
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +51,7 @@ class OllamaLLM:
             "model": self.model,
             "prompt": prompt,
             "stream": on_token is not None,
+            "keep_alive": KEEP_ALIVE,
             "options": {
                 "temperature": TEMPERATURE,
                 "stop": ["Observation:", "Observação:", "\nObservation:", "\nObservação:"],
@@ -120,11 +121,12 @@ class OllamaLLM:
     def generate_vision(self, prompt: str, image_b64: str, model: str = "") -> str:
         """Analisa imagem com modelo multimodal."""
         payload = {
-            "model":   model or VISION_MODEL,
-            "prompt":  prompt,
-            "images":  [image_b64],
-            "stream":  False,
-            "options": {"temperature": TEMPERATURE, "num_predict": NUM_PREDICT, "num_gpu": NUM_GPU},
+            "model":      model or VISION_MODEL,
+            "prompt":     prompt,
+            "images":     [image_b64],
+            "stream":     False,
+            "keep_alive": KEEP_ALIVE,
+            "options":    {"temperature": TEMPERATURE, "num_predict": NUM_PREDICT, "num_gpu": NUM_GPU},
         }
         for attempt in range(1, MAX_RETRIES + 1):
             try:
@@ -149,6 +151,10 @@ class OllamaEmbeddingFunction:
         self.url   = url
 
     def __call__(self, input: list[str]) -> list[list[float]]:
+        # Ollama serializa embeddings (uma requisição por vez no motor) — testado:
+        # 8 chamadas em paralelo enfileiram e algumas estouram timeout (30s),
+        # voltando vetor zero e corrompendo o índice silenciosamente. Sequencial
+        # é o comportamento seguro aqui.
         embeddings = []
         for text in input:
             try:
