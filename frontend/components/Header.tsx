@@ -282,11 +282,24 @@ function ProfileModal({ profile, onSave, onClose }: { profile: UserProfile; onSa
           />
         </Field>
         <Field label="Nível técnico">
-          <select value={form.tech_level} onChange={e => setForm(f => ({ ...f, tech_level: e.target.value as UserProfile['tech_level'] }))} style={inputStyle}>
+          <select
+            value={form.tech_level}
+            disabled={form.tech_level_auto}
+            onChange={e => setForm(f => ({ ...f, tech_level: e.target.value as UserProfile['tech_level'] }))}
+            style={{ ...inputStyle, opacity: form.tech_level_auto ? 0.6 : 1 }}
+          >
             {(['iniciante', 'intermediário', 'avançado', 'especialista'] as const).map(v => (
               <option key={v} value={v} style={{ background: '#2a2a2a' }}>{v.charAt(0).toUpperCase() + v.slice(1)}</option>
             ))}
           </select>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px', fontSize: '12px', color: 'var(--text-muted)', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={form.tech_level_auto}
+              onChange={e => setForm(f => ({ ...f, tech_level_auto: e.target.checked }))}
+            />
+            Detectar automaticamente pelo que eu escrevo
+          </label>
         </Field>
         <Field label="Tom de resposta">
           <select value={form.tone} onChange={e => setForm(f => ({ ...f, tone: e.target.value as UserProfile['tone'] }))} style={inputStyle}>

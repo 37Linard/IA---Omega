@@ -13,7 +13,7 @@ if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-from config import TOOL_TIMEOUT, TOOL_TIMEOUTS, MAX_TOOL_CALLS, MAX_TOOL_RETRIES, MAX_STEPS, REFLECTION_ENABLED, REFLECTION_THRESHOLD, HITL_ENABLED, HITL_BEFORE_TOOLS
+from config import TOOL_TIMEOUT, TOOL_TIMEOUTS, MAX_TOOL_CALLS, MAX_TOOL_RETRIES, MAX_STEPS, REFLECTION_ENABLED, REFLECTION_THRESHOLD, HITL_ENABLED, HITL_BEFORE_TOOLS, TASK_TIMEOUT
 import audit
 from memory import Memory
 from user_profile import UserProfile
@@ -167,6 +167,7 @@ class ReActAgent:
         self.memory             = Memory()
         self.profile            = UserProfile()
         self._cancel            = threading.Event()
+        self._cancel_reason     = "usuário"
         self.conversation       = []  # [{task, result}, ...]
         self.specialist_context = specialist_context
         self.session_id         = session_id
@@ -192,11 +193,18 @@ class ReActAgent:
         except Exception:
             pass
 
-    def cancel(self):
+    def cancel(self, reason: str = "usuário"):
+        self._cancel_reason = reason
         self._cancel.set()
 
     def reset_cancel(self):
         self._cancel.clear()
+        self._cancel_reason = "usuário"
+
+    def _cancel_message(self) -> str:
+        if self._cancel_reason == "timeout":
+            return f"Tarefa cancelada — excedeu o tempo máximo ({TASK_TIMEOUT}s)."
+        return "Tarefa cancelada pelo usuário."
 
     @staticmethod
     def _is_tool_error(output: str) -> bool:
@@ -644,6 +652,9 @@ class ReActAgent:
         self._reflected  = False   # previne loop infinito de reflection
         log.info("TAREFA: %s", task)
 
+        self.profile.observe_message(task)
+        self.profile.increment_interactions()
+
         def emit(data: dict):
             if step_callback:
                 step_callback(data)
@@ -669,7 +680,7 @@ class ReActAgent:
             results = []
             for i, step in enumerate(steps):
                 if self._cancel.is_set():
-                    emit({"type": "error", "content": "Tarefa cancelada pelo usuário."})
+                    emit({"type": "error", "content": self._cancel_message()})
                     emit({"type": "done", "content": ""})
                     return "Cancelado."
                 result = self._run_step(step, context, emit, i + 1, len(steps))
@@ -699,7 +710,7 @@ class ReActAgent:
 
         for step in range(max_steps):
             if self._cancel.is_set():
-                emit({"type": "error", "content": "Tarefa cancelada pelo usuário."})
+                emit({"type": "error", "content": self._cancel_message()})
                 emit({"type": "done", "content": ""})
                 return "Cancelado."
 

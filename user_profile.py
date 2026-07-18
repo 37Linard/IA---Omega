@@ -57,6 +57,38 @@ _BEGINNER_PHRASES = (
 
 _CODE_PATTERN = re.compile(r'```|`[^`\n]{3,}`|\bdef \w+\(|\bfunction\s*\(|\bimport \w+|\bclass \w+|SELECT .+ FROM|=>')
 
+# ── Extração heurística de interesses/preferências ──────────────────────────
+# Mesmo espírito do detector de nível técnico: regex leve em vez de chamada de
+# LLM (custaria uma inferência extra por turno, cara no hardware local).
+_STOP = r'(?=\s+(?:e|mas|porque|quando|só que|so que)\b|[\.,;!?\n]|$)'
+
+_INTEREST_PATTERN = re.compile(
+    r'\b(?:gosto de|eu gosto de|curto|sou fã de|sou fan de|tenho interesse em|'
+    r'interessad[oa] em|me interesso por|trabalho com|estou estudando|'
+    r'estudando|aprendendo|estou aprendendo|quero aprender)\s+'
+    r'([^\.,;!?\n]{3,40}?)' + _STOP,
+    re.IGNORECASE,
+)
+
+_PREFERENCE_PATTERN = re.compile(
+    r'\b(?:prefiro|eu prefiro|sempre (?:responda|responde|explique|explica|use|usa|fale|fala))\s+'
+    r'([^\.,;!?\n]{3,40}?)' + _STOP,
+    re.IGNORECASE,
+)
+
+
+def _clean_topic(raw: str) -> str:
+    return raw.strip(" .,;!?")[:40]
+
+
+def _extract_interests(text: str) -> list[str]:
+    return [t for m in _INTEREST_PATTERN.finditer(text) if (t := _clean_topic(m.group(1)))]
+
+
+def _extract_preferences(text: str) -> list[str]:
+    return [t for m in _PREFERENCE_PATTERN.finditer(text) if (t := _clean_topic(m.group(1)))]
+
+
 _SCORE_THRESHOLDS = (
     (1.2, "especialista"),
     (0.4, "avançado"),
@@ -137,10 +169,19 @@ class UserProfile:
         log.info("UserProfile atualizado: %s", list(kwargs.keys()))
 
     def observe_message(self, text: str):
-        """Atualiza o nível técnico estimado a partir do texto da mensagem.
-        Não faz nada se o usuário já travou o nível manualmente (tech_level_auto=False)
-        via POST /profile — auto-detecção nunca sobrescreve escolha explícita."""
-        if not text or not self.data.get("tech_level_auto", True):
+        """Atualiza nível técnico, interesses e preferências a partir do texto da mensagem.
+        O nível técnico não é tocado se o usuário já travou manualmente (tech_level_auto=False)
+        via POST /profile — mas extração de interesse/preferência roda sempre (escopo
+        independente do lock de tech_level)."""
+        if not text:
+            return
+
+        for topic in _extract_interests(text):
+            self.add_interest(topic)
+        for pref in _extract_preferences(text):
+            self.add_preference(pref)
+
+        if not self.data.get("tech_level_auto", True):
             return
 
         signal = _detect_tech_signal(text)
