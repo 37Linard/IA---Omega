@@ -6,6 +6,8 @@ try:
 except ImportError:
     BS4_AVAILABLE = False
 
+from tools._security import wrap_untrusted
+
 
 class FetchPageTool:
     name = "fetch_page"
@@ -56,7 +58,9 @@ class FetchPageTool:
             if len(clean) > 4000:
                 clean = clean[:4000] + "\n\n[... página truncada ...]"
 
-            return clean if clean else "Página sem conteúdo legível."
+            if not clean:
+                return "Página sem conteúdo legível."
+            return wrap_untrusted(url, clean)
 
         except requests.Timeout:
             return "Erro: página não respondeu em 15 segundos."

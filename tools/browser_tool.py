@@ -6,6 +6,8 @@ import base64
 import os
 from datetime import datetime
 
+from tools._security import wrap_untrusted
+
 _PROJECT  = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKSPACE = os.path.join(_PROJECT, "workspace")
 
@@ -102,7 +104,7 @@ class BrowserTool:
                 return (
                     f"URL: {url}\nTitulo: {page.title()}\n\n"
                     f"![screenshot]({_img_url(fname)})\n\n"
-                    f"**Analise Visual:**\n{desc}"
+                    f"**Analise Visual:**\n{wrap_untrusted(url, desc)}"
                 )
 
             # ── Visual describe: screenshot current state + VLM ────────────
@@ -118,7 +120,7 @@ class BrowserTool:
                 return (
                     f"URL atual: {page.url}\nTitulo: {page.title()}\n\n"
                     f"![screenshot]({_img_url(fname)})\n\n"
-                    f"**Analise Visual:**\n{desc}"
+                    f"**Analise Visual:**\n{wrap_untrusted(page.url, desc)}"
                 )
 
             # ── Goto (sem VLM) ─────────────────────────────────────────────
@@ -154,8 +156,9 @@ class BrowserTool:
             elif action == "get_text":
                 sel  = input_data.get("selector", "body")
                 text = page.inner_text(sel)
-                out  = text[:3000] if text else "Sem texto."
-                return out
+                if not text:
+                    return "Sem texto."
+                return wrap_untrusted(page.url, text[:3000])
 
             # ── Screenshot only ────────────────────────────────────────────
             elif action == "screenshot":

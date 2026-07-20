@@ -2,6 +2,8 @@ import os
 import json
 import logging
 
+from tools._security import wrap_untrusted
+
 log = logging.getLogger(__name__)
 
 CREDS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "gdrive_credentials.json")
@@ -146,7 +148,10 @@ class GoogleDriveTool:
                 file_id = params.get("file_id", "").strip()
                 if not file_id:
                     return "Erro: forneça 'file_id' do documento."
-                return _read_doc(file_id)
+                doc_text = _read_doc(file_id)
+                if doc_text in ("Documento vazio.",):
+                    return doc_text
+                return wrap_untrusted(f"Google Doc {file_id}", doc_text)
             elif action == "create":
                 title   = params.get("title", "Novo Documento").strip()
                 content = params.get("content", "")
