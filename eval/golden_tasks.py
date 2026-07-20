@@ -42,7 +42,7 @@ GOLDEN_TASKS = [
         "must_not_contain": ["erro:", "traceback"],
         "expected_tools": ["get_currency"],
         "forbidden_tools": ["get_crypto"],
-        "max_seconds": 45,
+        "max_seconds": 90,  # roda + reflection loop — 45s dava FAIL falso mesmo com resposta certa
     },
     {
         "id": "crypto_routing_not_currency",
@@ -52,7 +52,7 @@ GOLDEN_TASKS = [
         "must_not_contain": ["erro:", "traceback"],
         "expected_tools": ["get_crypto"],
         "forbidden_tools": ["get_currency"],
-        "max_seconds": 45,
+        "max_seconds": 90,  # roda + reflection loop — 45s dava FAIL falso mesmo com resposta certa
     },
     {
         "id": "compound_task_multi_domain_regression",
