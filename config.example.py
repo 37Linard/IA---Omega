@@ -13,6 +13,7 @@ _PROJECT = os.path.dirname(os.path.abspath(__file__))
 OLLAMA_MODEL   = "llama3.2:3b"   # recomendado para GPUs 4-6GB VRAM
 VISION_MODEL   = "llava:7b"      # usado por analyze_image (baixe com: ollama pull llava:7b)
 OLLAMA_URL     = "http://localhost:11434"
+FALLBACK_MODEL = ""  # modelo leve pra usar se OLLAMA_MODEL travar/timeout; "" desliga fallback
 
 # ── Obsidian (opcional) ────────────────────────────────────────────────────
 OBSIDIAN_BASE  = os.path.join(_HOME, "Documents", "Obsidian Vault")
@@ -71,6 +72,10 @@ NOTION_DATABASE_ID = ""
 # api.slack.com → Your App → Incoming Webhooks
 SLACK_WEBHOOK_URL = ""
 SLACK_BOT_TOKEN   = ""
+
+# ── Discord (opcional) ────────────────────────────────────────────────────
+# Server Settings → Integrations → Webhooks → New Webhook → copiar URL
+DISCORD_WEBHOOK_URL = ""
 
 # ── Google Drive (opcional) ───────────────────────────────────────────────
 # 1. console.cloud.google.com → ativar Drive API + Docs API

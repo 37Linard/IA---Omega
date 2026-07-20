@@ -7,6 +7,7 @@ _PROJECT = os.path.dirname(os.path.abspath(__file__))
 OLLAMA_MODEL   = "qwen2.5:7b"   # trocado de llama3.2:3b (2026-07-04) — 3b ignorava instrucao, repetia tool call
 VISION_MODEL   = "moondream:1.8b"  # VLM local — cabe em 2GB VRAM (moondream:1.8b ou llava:7b)
 OLLAMA_URL     = "http://localhost:11434"
+FALLBACK_MODEL = os.environ.get("FALLBACK_MODEL", "llama3.2:3b")  # usado se OLLAMA_MODEL travar/timeout após MAX_RETRIES; "" desliga
 API_URL        = "http://localhost:8000"  # URL base da API (usada por tools para gerar links de imagem)
 
 # ── Obsidian (opcional) ────────────────────────────────────────────────────
@@ -95,6 +96,10 @@ NOTION_DATABASE_ID = os.environ.get("NOTION_DATABASE_ID", "")
 # api.slack.com → Your App → Incoming Webhooks ou OAuth & Permissions
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
 SLACK_BOT_TOKEN   = os.environ.get("SLACK_BOT_TOKEN", "")
+
+# ── Discord (opcional) ────────────────────────────────────────────────────
+# Server Settings → Integrations → Webhooks → New Webhook → copiar URL
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 
 # -- Geracao de imagem - Stable Diffusion local (opcional) ------------------
 # Requer: pip install torch diffusers accelerate
