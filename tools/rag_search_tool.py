@@ -3,6 +3,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from rag import get_rag_index
+from tools._security import wrap_untrusted
 
 
 class RagSearchTool:
@@ -39,4 +40,4 @@ class RagSearchTool:
                 f"[{i}] {r['file']} — pág. {r['page']} (score: {r['score']})\n"
                 f"{r['text'][:400]}\n"
             )
-        return "\n".join(lines)
+        return wrap_untrusted(f"documentos indexados: {query}", "\n".join(lines))

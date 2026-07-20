@@ -3,6 +3,8 @@ try:
 except ImportError:
     from duckduckgo_search import DDGS
 
+from tools._security import wrap_untrusted
+
 MAX_BODY = 300
 
 
@@ -33,7 +35,7 @@ class WebSearchTool:
                 output.append(f"    {body}")
                 output.append("")
 
-            return "\n".join(output)
+            return wrap_untrusted(f"busca: {query}", "\n".join(output))
 
         except Exception as e:
             return f"Erro na pesquisa: {str(e)}"
