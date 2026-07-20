@@ -94,3 +94,25 @@ IMAGE_GEN_GUIDANCE_SCALE = 0.0
 # -- Plugin marketplace (opcional, desligado por padrao) --------------------
 # Ver plugin_manager.py pro modelo de seguranca antes de habilitar.
 PLUGINS_ENABLED = False
+
+# ── Human-in-the-Loop — permissão em camadas por risco (opcional) ──────────
+# read: só lê. write: muda estado local (reversível). destructive: efeito
+# externo/visível a terceiros ou controle real de OS/browser.
+TOOL_RISK_TIERS: dict = {
+    "fetch_page": "read", "web_search": "read", "rag_search": "read",
+    "read_file": "read", "list_directory": "read", "read_spreadsheet": "read",
+    "get_currency": "read", "get_crypto": "read", "analyze_image": "read",
+    "screenshot": "read", "echo": "read", "clipboard": "read",
+
+    "write_file": "write", "save_note": "write", "generate_chart": "write",
+    "generate_image": "write", "generate_report": "write", "run_python": "write",
+    "run_sql": "write", "remember_fact": "write", "http_request": "write",
+
+    "send_email": "destructive", "terminal": "destructive", "git": "destructive",
+    "browser": "destructive", "google_drive": "destructive", "notion": "destructive",
+    "slack": "destructive", "discord_notify": "destructive",
+    "keyboard": "destructive", "mouse": "destructive",
+}
+DEFAULT_TOOL_RISK = "write"          # tool nova/não listada — cautela por padrão
+HITL_ENABLED       = False           # pausa agente e pede aprovação humana
+HITL_GATE_TIERS    = ["destructive"]  # quais tiers disparam HITL quando HITL_ENABLED=True

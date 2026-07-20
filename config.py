@@ -76,8 +76,31 @@ SHORT_TERM_TTL  = 1800   # segundos (30 min) — TTL do contexto imediato
 SHORT_TERM_MSGS = 10     # máx mensagens por sessão no contexto imediato
 
 # ── Human-in-the-Loop (v1.0) ──────────────────────────────────────────────
-HITL_ENABLED      = False                                    # pausa agente e pede aprovação humana
-HITL_BEFORE_TOOLS = ["email", "write_file", "terminal"]      # ferramentas que disparam HITL
+# Permissão em camadas por risco, em vez de lista fixa de tool names (que ficava
+# desatualizada e tinha bug — "email" nunca batia porque o name real é "send_email").
+# read: só lê/consulta, nunca precisa aprovação.
+# write: muda estado local (arquivo, nota, memória, gráfico) — reversível, baixo risco.
+# destructive: efeito externo, visível a terceiros, ou controle real de OS/browser —
+#              email real, shell, git (push/reset), Drive, Slack/Notion/Discord, mouse/teclado.
+TOOL_RISK_TIERS: dict = {
+    "fetch_page": "read", "web_search": "read", "rag_search": "read",
+    "read_file": "read", "list_directory": "read", "read_spreadsheet": "read",
+    "get_currency": "read", "get_crypto": "read", "analyze_image": "read",
+    "screenshot": "read", "echo": "read", "clipboard": "read",
+
+    "write_file": "write", "save_note": "write", "generate_chart": "write",
+    "generate_image": "write", "generate_report": "write", "run_python": "write",
+    "run_sql": "write", "remember_fact": "write", "http_request": "write",
+
+    "send_email": "destructive", "terminal": "destructive", "git": "destructive",
+    "browser": "destructive", "google_drive": "destructive", "notion": "destructive",
+    "slack": "destructive", "discord_notify": "destructive",
+    "keyboard": "destructive", "mouse": "destructive",
+}
+DEFAULT_TOOL_RISK = "write"  # tool nova/não listada (ex.: plugin) — cautela por padrão, não confiança cega
+
+HITL_ENABLED    = False              # pausa agente e pede aprovação humana
+HITL_GATE_TIERS = ["destructive"]    # quais tiers disparam HITL quando HITL_ENABLED=True
 
 # ── Specialist models (v1.0) ──────────────────────────────────────────────
 # Deixe vazio ("") para herdar OLLAMA_MODEL
