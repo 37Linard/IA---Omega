@@ -167,6 +167,8 @@ async def set_model(body: dict):
 async def get_metrics():
     import subprocess as _sp
     from audit import tool_stats as _tool_stats
+    import tracing as _tracing
+    from knowledge_graph import KnowledgeGraph as _KnowledgeGraph
 
     # VRAM via nvidia-smi
     vram: dict = {}
@@ -182,6 +184,11 @@ async def get_metrics():
     except Exception:
         pass
 
+    try:
+        kg_stats = _KnowledgeGraph().stats()
+    except Exception:
+        kg_stats = {"entities": 0, "relations": 0}
+
     return {
         "inference": {
             "tps":               llm.session_tokens.get("tps", 0),
@@ -190,8 +197,10 @@ async def get_metrics():
             "prompt_tokens":     llm.session_tokens.get("prompt", 0),
             "completion_tokens": llm.session_tokens.get("completion", 0),
         },
-        "tools": _tool_stats(days=7),
-        "vram": vram,
+        "tools":           _tool_stats(days=7),
+        "llm_calls":       _tracing.stats(days=1),
+        "knowledge_graph": kg_stats,
+        "vram":            vram,
     }
 
 
