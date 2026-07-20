@@ -43,6 +43,7 @@ def _isolate_state(scratch_dir: str):
     import user_profile as profile_mod
     import audit as audit_mod
     import knowledge_graph as kg_mod
+    import tracing as tracing_mod
 
     memory_mod.MEMORY_FILE       = os.path.join(scratch_dir, "agent_memory.json")
     memory_mod.LANCE_MEMORY_DIR  = os.path.join(scratch_dir, "lance_memory_db")
@@ -50,6 +51,7 @@ def _isolate_state(scratch_dir: str):
     profile_mod.PROFILE_FILE     = os.path.join(scratch_dir, "user_profile.json")
     audit_mod.AUDIT_DB           = os.path.join(scratch_dir, "audit.db")
     kg_mod.GRAPH_FILE            = os.path.join(scratch_dir, "knowledge_graph.json")
+    tracing_mod.TRACE_DB         = os.path.join(scratch_dir, "traces.db")
 
 
 _ACTION_RE = re.compile(r"^(\w+)\(")

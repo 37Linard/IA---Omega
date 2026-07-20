@@ -2,9 +2,27 @@ import json
 import logging
 import time
 import requests
+import tracing
 from config import OLLAMA_URL, NUM_PREDICT, NUM_CTX, NUM_GPU, TEMPERATURE, VISION_MODEL, KEEP_ALIVE, FALLBACK_MODEL
 
 log = logging.getLogger(__name__)
+
+
+def _trace(kind: str, model: str, t0: float, call_stats: dict = None, *,
+           success: bool = True, error: str = "", fallback_used: bool = False,
+           prompt_preview: str = ""):
+    """Grava um span (tracing.py). Chamada por valor/retorno, nunca por atributo
+    de instância — OllamaLLM é compartilhado entre threads (specialists paralelos
+    no modo colaborativo), estado por-chamada em self vazaria entre elas."""
+    call_stats = call_stats or {}
+    tracing.record_span(
+        kind=kind, model=model, duration_ms=(time.monotonic() - t0) * 1000,
+        prompt_tokens=call_stats.get("prompt_tokens", 0),
+        completion_tokens=call_stats.get("completion_tokens", 0),
+        tps=call_stats.get("tps", 0.0),
+        success=success, error=error, fallback_used=fallback_used,
+        prompt_preview=prompt_preview,
+    )
 
 MAX_RETRIES = 3
 RETRY_DELAY = 5  # segundos — dá tempo pro Ollama carregar o modelo
@@ -26,7 +44,10 @@ class OllamaLLM:
             "tps": 0.0, "ttft_ms": 0.0, "context_pct": 0.0,
         }
 
-    def _update_stats(self, data: dict):
+    def _update_stats(self, data: dict) -> dict:
+        """Atualiza session_tokens (agregado cumulativo, pro dashboard) e retorna
+        as stats DESSA chamada isoladas (pro span) — os dois têm granularidade
+        diferente de propósito."""
         eval_count    = data.get("eval_count", 0)
         eval_dur_ns   = data.get("eval_duration", 0)
         prompt_count  = data.get("prompt_eval_count", 0)
@@ -36,8 +57,10 @@ class OllamaLLM:
         self.session_tokens["prompt"]     += prompt_count
         self.session_tokens["completion"] += eval_count
 
+        tps = 0.0
         if eval_dur_ns > 0 and eval_count > 0:
-            self.session_tokens["tps"] = round(eval_count / (eval_dur_ns / 1e9), 1)
+            tps = round(eval_count / (eval_dur_ns / 1e9), 1)
+            self.session_tokens["tps"] = tps
 
         ttft_ns = load_dur_ns + prompt_dur_ns
         if ttft_ns > 0:
@@ -46,7 +69,9 @@ class OllamaLLM:
         if prompt_count > 0 and NUM_CTX > 0:
             self.session_tokens["context_pct"] = round(prompt_count / NUM_CTX * 100, 1)
 
-    def _request(self, model: str, prompt: str, options: dict, on_token) -> str:
+        return {"prompt_tokens": prompt_count, "completion_tokens": eval_count, "tps": tps}
+
+    def _request(self, model: str, prompt: str, options: dict, on_token) -> tuple[str, dict]:
         payload = {
             "model": model,
             "prompt": prompt,
@@ -59,10 +84,11 @@ class OllamaLLM:
             response = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=120)
             response.raise_for_status()
             data = response.json()
-            self._update_stats(data)
-            return data["response"].strip()
+            call_stats = self._update_stats(data)
+            return data["response"].strip(), call_stats
 
         full_response = ""
+        call_stats = {}
         with requests.post(f"{self.base_url}/api/generate", json=payload, stream=True, timeout=120) as response:
             response.raise_for_status()
             for line in response.iter_lines():
@@ -77,9 +103,9 @@ class OllamaLLM:
                     full_response += token
                     on_token(token)
                 if data.get("done"):
-                    self._update_stats(data)
+                    call_stats = self._update_stats(data)
                     break
-        return full_response.strip()
+        return full_response.strip(), call_stats
 
     def generate(self, prompt: str, on_token=None) -> str:
         """Gera resposta com retry automático; cai pro FALLBACK_MODEL se o modelo
@@ -92,28 +118,37 @@ class OllamaLLM:
             "num_gpu": NUM_GPU,
         }
 
+        t0 = time.monotonic()
         last_err = None
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                return self._request(self.model, prompt, options, on_token)
+                text, call_stats = self._request(self.model, prompt, options, on_token)
+                _trace("generate", self.model, t0, call_stats, prompt_preview=prompt[:150])
+                return text
             except (requests.Timeout, requests.ConnectionError) as e:
                 last_err = e
                 log.warning("LLM tentativa %d/%d falhou (%s): %s", attempt, MAX_RETRIES, self.model, e)
                 if attempt < MAX_RETRIES:
                     time.sleep(RETRY_DELAY * attempt)
             except requests.HTTPError as e:
+                _trace("generate", self.model, t0, success=False, error=str(e), prompt_preview=prompt[:150])
                 raise RuntimeError(f"Erro Ollama: {e}") from e
 
         if self.fallback_model and self.fallback_model != self.model:
             log.warning("LLM: '%s' indisponível após %d tentativas — usando fallback '%s'",
                         self.model, MAX_RETRIES, self.fallback_model)
             try:
-                return self._request(self.fallback_model, prompt, options, on_token)
+                text, call_stats = self._request(self.fallback_model, prompt, options, on_token)
+                _trace("generate", self.fallback_model, t0, call_stats, fallback_used=True, prompt_preview=prompt[:150])
+                return text
             except Exception as fe:
+                _trace("generate", self.fallback_model, t0, success=False, error=str(fe),
+                       fallback_used=True, prompt_preview=prompt[:150])
                 raise RuntimeError(
                     f"Ollama não respondeu ('{self.model}') e fallback '{self.fallback_model}' também falhou: {fe}"
                 ) from fe
 
+        _trace("generate", self.model, t0, success=False, error=str(last_err), prompt_preview=prompt[:150])
         raise RuntimeError(f"Ollama não respondeu após {MAX_RETRIES} tentativas.") from last_err
 
     def embed(self, text: str) -> list[float]:
@@ -129,26 +164,33 @@ class OllamaLLM:
 
     def generate_vision(self, prompt: str, image_b64: str, model: str = "") -> str:
         """Analisa imagem com modelo multimodal."""
+        vision_model = model or VISION_MODEL
         payload = {
-            "model":      model or VISION_MODEL,
+            "model":      vision_model,
             "prompt":     prompt,
             "images":     [image_b64],
             "stream":     False,
             "keep_alive": KEEP_ALIVE,
             "options":    {"temperature": TEMPERATURE, "num_predict": NUM_PREDICT, "num_gpu": NUM_GPU},
         }
+        t0 = time.monotonic()
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 r = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=120)
                 r.raise_for_status()
-                return r.json()["response"].strip()
+                data = r.json()
+                call_stats = self._update_stats(data)
+                _trace("generate_vision", vision_model, t0, call_stats, prompt_preview=prompt[:150])
+                return data["response"].strip()
             except (requests.Timeout, requests.ConnectionError) as e:
                 log.warning("Vision LLM tentativa %d/%d: %s", attempt, MAX_RETRIES, e)
                 if attempt < MAX_RETRIES:
                     time.sleep(RETRY_DELAY * attempt)
                 else:
+                    _trace("generate_vision", vision_model, t0, success=False, error=str(e), prompt_preview=prompt[:150])
                     raise RuntimeError(f"Ollama vision não respondeu após {MAX_RETRIES} tentativas.") from e
             except requests.HTTPError as e:
+                _trace("generate_vision", vision_model, t0, success=False, error=str(e), prompt_preview=prompt[:150])
                 raise RuntimeError(f"Erro Ollama vision: {e}") from e
 
 
