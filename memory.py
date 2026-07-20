@@ -8,6 +8,9 @@ from datetime import datetime, timedelta
 BACKUP_DIR  = os.path.join(os.path.dirname(__file__), "workspace", "backups")
 MAX_BACKUPS = 7
 FACT_TTL_DAYS = 30
+MAX_FACTS = 200   # cap de armazenamento — sessions já é limitado a 20, facts não tinha teto
+CONTEXT_MAX_FACTS = 15   # cap do que entra no prompt quando a busca semântica (LanceDB) está indisponível
+CONTEXT_FACT_CHARS = 150
 
 MEMORY_FILE = os.path.join(os.path.dirname(__file__), "agent_memory.json")
 LANCE_MEMORY_DIR = os.path.join(os.path.dirname(__file__), "workspace", "lance_memory_db")
@@ -311,7 +314,7 @@ class Memory:
                     kept.append(f)
             else:
                 kept.append({"text": f, "created": datetime.now().isoformat()})
-        self.data["facts"] = kept
+        self.data["facts"] = kept[-MAX_FACTS:]
 
     def save_fact(self, fact: str):
         existing = [
@@ -369,11 +372,17 @@ class Memory:
                     ep_lines.append(f"    Resultado: {s.get('result', '')[:100]}")
         else:
             if self.data["facts"]:
-                ep_lines.append("\nFatos importantes:")
-                for f in self.data["facts"]:
+                # Fallback sem busca semântica (LanceDB indisponível) — sem isso o
+                # prompt levava TODOS os fatos armazenados, sem truncar, estourando
+                # NUM_CTX de forma silenciosa e imprevisível.
+                recent_facts = self.data["facts"][-CONTEXT_MAX_FACTS:]
+                ep_lines.append(
+                    f"\nFatos importantes (mais recentes, {len(recent_facts)} de {len(self.data['facts'])}):"
+                )
+                for f in recent_facts:
                     text = f.get("text", f) if isinstance(f, dict) else f
                     age  = f.get("created", "")[:10] if isinstance(f, dict) else ""
-                    ep_lines.append(f"  - {text}" + (f" ({age})" if age else ""))
+                    ep_lines.append(f"  - {text[:CONTEXT_FACT_CHARS]}" + (f" ({age})" if age else ""))
 
             if self.data["sessions"]:
                 ep_lines.append("\nÚltimas tarefas executadas:")
