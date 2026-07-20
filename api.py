@@ -168,6 +168,7 @@ async def get_metrics():
     import subprocess as _sp
     from audit import tool_stats as _tool_stats
     import tracing as _tracing
+    import circuit_breaker as _circuit_breaker
     from knowledge_graph import KnowledgeGraph as _KnowledgeGraph
 
     # VRAM via nvidia-smi
@@ -199,6 +200,7 @@ async def get_metrics():
         },
         "tools":           _tool_stats(days=7),
         "llm_calls":       _tracing.stats(days=1),
+        "circuit_breaker": _circuit_breaker.status(),
         "knowledge_graph": kg_stats,
         "vram":            vram,
     }
@@ -474,6 +476,19 @@ async def trace_llm_stats(days: int = 1):
 async def trace_llm_recent(limit: int = 50):
     import tracing
     return tracing.recent(limit=min(limit, 200))
+
+
+@app.get("/circuit-breaker/status")
+async def circuit_breaker_status():
+    import circuit_breaker
+    return circuit_breaker.status()
+
+
+@app.post("/circuit-breaker/reset")
+async def circuit_breaker_reset(tool: str = ""):
+    import circuit_breaker
+    circuit_breaker.reset(tool or None)
+    return {"reset": tool or "all"}
 
 
 @app.get("/memory/short-term/{session_id}")

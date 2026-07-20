@@ -363,6 +363,11 @@ function HealthModal({ onClose }: { onClose: () => void }) {
   const tools = metrics?.tools ?? []
   const llmCalls = metrics?.llm_calls ?? []
   const kg = metrics?.knowledge_graph
+  const breakers = (metrics?.circuit_breaker ?? []).filter(b => b.open)
+  // Alerta só com volume mínimo de chamadas — 1 falha isolada não é sinal de nada
+  const ALERT_MIN_CALLS = 3
+  const toolAlerts  = tools.filter(t => t.calls >= ALERT_MIN_CALLS && t.success_rate < 70)
+  const modelAlerts = llmCalls.filter(m => m.calls >= ALERT_MIN_CALLS && m.error_rate > 20)
 
   return (
     <div
@@ -398,6 +403,42 @@ function HealthModal({ onClose }: { onClose: () => void }) {
         <div style={{ overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
           {error && (
             <p style={{ fontSize: '13px', color: '#f87171', textAlign: 'center' }}>Backend indisponível</p>
+          )}
+
+          {/* Circuit breaker — só aparece quando alguma tool está desabilitada */}
+          {breakers.length > 0 && (
+            <div>
+              <p style={{ fontSize: '12px', fontWeight: 500, color: '#f87171', marginBottom: '10px', letterSpacing: '0.05em' }}>⚠ FERRAMENTAS DESABILITADAS (CIRCUIT BREAKER)</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {breakers.map(b => (
+                  <div key={b.tool} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: '6px', padding: '8px 12px' }}>
+                    <span style={{ fontSize: '12px', color: 'var(--text-primary)', fontFamily: 'monospace' }}>{b.tool}</span>
+                    <span style={{ fontSize: '11px', color: '#f87171' }}>{b.failures} falhas — volta em {Math.round(b.cooldown_remaining_s)}s</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Taxa de erro alta — tools/modelos com volume mínimo de chamadas */}
+          {(toolAlerts.length > 0 || modelAlerts.length > 0) && (
+            <div>
+              <p style={{ fontSize: '12px', fontWeight: 500, color: '#f87171', marginBottom: '10px', letterSpacing: '0.05em' }}>⚠ TAXA DE ERRO ALTA</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {toolAlerts.map(t => (
+                  <div key={`tool-${t.tool}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: '6px', padding: '8px 12px' }}>
+                    <span style={{ fontSize: '12px', color: 'var(--text-primary)', fontFamily: 'monospace' }}>{t.tool}</span>
+                    <span style={{ fontSize: '11px', color: '#f87171' }}>{t.success_rate}% sucesso em {t.calls} chamadas (7d)</span>
+                  </div>
+                ))}
+                {modelAlerts.map(m => (
+                  <div key={`model-${m.model}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: '6px', padding: '8px 12px' }}>
+                    <span style={{ fontSize: '12px', color: 'var(--text-primary)', fontFamily: 'monospace' }}>{m.model}</span>
+                    <span style={{ fontSize: '11px', color: '#f87171' }}>{m.error_rate}% erro em {m.calls} chamadas (24h)</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
 
           {/* Inference metrics */}
