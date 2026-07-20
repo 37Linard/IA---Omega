@@ -15,6 +15,7 @@ if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 from config import TOOL_TIMEOUT, TOOL_TIMEOUTS, MAX_TOOL_CALLS, MAX_TOOL_RETRIES, MAX_STEPS, REFLECTION_ENABLED, REFLECTION_THRESHOLD, HITL_ENABLED, HITL_GATE_TIERS, TOOL_RISK_TIERS, DEFAULT_TOOL_RISK, TASK_TIMEOUT
 import audit
+import circuit_breaker
 from memory import Memory
 from user_profile import UserProfile
 from tools import _schema as tool_schema
@@ -392,6 +393,16 @@ class ReActAgent:
         self._tool_calls += 1
         if self._tool_calls > MAX_TOOL_CALLS:
             return f"Bloqueado: limite de {MAX_TOOL_CALLS} chamadas de ferramentas atingido nesta tarefa."
+        # Circuit breaker — tool que já falhou repetido (não é o mesmo input, é a
+        # tool inteira — ex.: Google Drive sem credencial) fica desabilitada um
+        # tempo em vez de gastar rede/tempo/tokens numa chamada já condenada.
+        breaker_open, cooldown_left = circuit_breaker.is_open(action)
+        if breaker_open:
+            return (
+                f"Circuito aberto para '{action}' — falhou repetidamente e está desabilitada "
+                f"por mais {cooldown_left:.0f}s (evita gastar tempo numa ferramenta que já provou "
+                f"estar indisponível). Use outra abordagem ou informe o usuário."
+            )
         # Schema shallow — pega campo obrigatório faltando/enum inválido ANTES de
         # rodar a tool ou (pior) disparar HITL pra uma chamada já condenada a falhar.
         schema_error = tool_schema.validate(action, action_input)
@@ -411,6 +422,7 @@ class ReActAgent:
                 result = f"Erro: '{action}' excedeu {timeout}s e foi cancelada."
             except Exception as e:
                 result = f"Erro ao executar {action}: {str(e)}"
+        circuit_breaker.record_result(action, success=not self._is_tool_error(result))
         audit.log_action(action, action_input, result, duration=time.monotonic() - t0)
         return result
 
