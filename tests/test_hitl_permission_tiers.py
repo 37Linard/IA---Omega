@@ -37,7 +37,7 @@ def test_execute_tool_runs_directly_when_hitl_disabled(monkeypatch):
     monkeypatch.setattr(agent_mod.audit, "log_action", lambda *a, **k: None)
     a = _bare_agent([_FakeTool("terminal")])
 
-    result = a._execute_tool("terminal", {})
+    result = a._execute_tool("terminal", {"command": "ls"})
 
     assert result == "ran terminal"
 
@@ -49,7 +49,7 @@ def test_execute_tool_gates_destructive_tool_and_runs_when_approved(monkeypatch)
     a = _bare_agent([_FakeTool("terminal")])
     a._hitl_gate = lambda action, action_input: True
 
-    result = a._execute_tool("terminal", {})
+    result = a._execute_tool("terminal", {"command": "ls"})
 
     assert result == "ran terminal"
 
@@ -60,7 +60,7 @@ def test_execute_tool_blocks_destructive_tool_when_rejected(monkeypatch):
     a = _bare_agent([_FakeTool("terminal")])
     a._hitl_gate = lambda action, action_input: False
 
-    result = a._execute_tool("terminal", {})
+    result = a._execute_tool("terminal", {"command": "ls"})
 
     assert "cancelada" in result.lower()
 
@@ -75,7 +75,7 @@ def test_execute_tool_skips_gate_for_tiers_not_configured(monkeypatch):
         raise AssertionError("hitl gate nao deveria ser chamado pra tool de tier 'read'")
     a._hitl_gate = boom
 
-    result = a._execute_tool("read_file", {})
+    result = a._execute_tool("read_file", {"path": "workspace/nota.txt"})
 
     assert result == "ran read_file"
 
