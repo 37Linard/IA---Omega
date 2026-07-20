@@ -158,6 +158,13 @@ def domain_hits(task: str) -> set[str]:
     return hits
 
 
+def tools_for_domains(domains: set[str]) -> list[str]:
+    """União ordenada das tools de cada especialista em `domains` — usada pra
+    liberar só as ferramentas dos domínios detectados numa tarefa composta,
+    em vez do toolset inteiro do sistema (least privilege)."""
+    return sorted({t for d in domains for t in SPECIALISTS.get(d, {}).get("tools", [])})
+
+
 def is_multi_domain(task: str, min_domains: int = 2) -> bool:
     """Detecta tarefa composta (multiplos dominios sequenciais).
     min_domains=3 → modo colaborativo (especialistas paralelos).
@@ -265,13 +272,19 @@ class OrchestratorAgent:
     # -----------------------------------------------------------------
     # Criação de especialista
     # -----------------------------------------------------------------
-    def _create_specialist(self, specialist_name: str, full_tools: bool = False):
+    def _create_specialist(self, specialist_name: str, tool_names: list[str] = None):
+        """tool_names=None -> toolset padrao do especialista (ou tudo se for 'geral',
+        que nao tem categoria propria). tool_names explicito -> restringe a essa lista
+        (usado pra liberar so os dominios detectados na tarefa, nao a ferramenta inteira)."""
         from agent import ReActAgent
 
-        spec  = SPECIALISTS[specialist_name]
-        tools = (list(self.all_tools.values())
-                 if full_tools or not spec["tools"]
-                 else [self.all_tools[t] for t in spec["tools"] if t in self.all_tools])
+        spec = SPECIALISTS[specialist_name]
+        if tool_names is not None:
+            tools = [self.all_tools[t] for t in tool_names if t in self.all_tools]
+        elif not spec["tools"]:
+            tools = list(self.all_tools.values())
+        else:
+            tools = [self.all_tools[t] for t in spec["tools"] if t in self.all_tools]
 
         model          = get_specialist_model(specialist_name)
         specialist_llm = self._get_llm(model)
@@ -300,14 +313,28 @@ class OrchestratorAgent:
         spec_model      = get_specialist_model(specialist_name)
         multi_domain    = is_multi_domain(task, min_domains=2)
         emit({"type": "thought", "content": f"Especialista: {spec_label} · {spec_model}"})
-        if multi_domain:
-            emit({"type": "thought", "content": "Tarefa multi-dominio — liberando todas as ferramentas para o especialista"})
-        log.info("ORCHESTRATOR → %s (model=%s, full_tools=%s)", spec_label, spec_model, multi_domain)
+
+        tool_names = None
+        if multi_domain and specialist_name != "geral":
+            # Só libera as ferramentas dos domínios realmente detectados na tarefa
+            # (least privilege) em vez da lista inteira de tools do sistema — o
+            # especialista continua sem acesso a terminal/git/email só porque a
+            # tarefa também mencionou "arquivo".
+            hits = domain_hits(task) | {specialist_name}
+            tool_names = tools_for_domains(hits)
+            emit({
+                "type": "thought",
+                "content": f"Tarefa multi-domínio ({', '.join(sorted(hits))}) — liberando ferramentas desses domínios: {', '.join(tool_names)}",
+            })
+        elif multi_domain:
+            emit({"type": "thought", "content": "Tarefa multi-domínio — Agente Geral já tem acesso a todas as ferramentas"})
+
+        log.info("ORCHESTRATOR → %s (model=%s, tool_names=%s)", spec_label, spec_model, tool_names)
 
         if spec_model not in OrchestratorAgent._llm_cache:
             emit({"type": "thought", "content": f"Carregando modelo '{spec_model}'..."})
 
-        agent = self._create_specialist(specialist_name, full_tools=multi_domain)
+        agent = self._create_specialist(specialist_name, tool_names=tool_names)
         with self._lock:
             self._active.append(agent)
         try:
