@@ -35,6 +35,7 @@ export async function fetchMetrics(): Promise<{
   tools: Array<{ tool: string; calls: number; errors: number; success_rate: number; avg_ms: number }>
   llm_calls: Array<{ model: string; calls: number; errors: number; fallbacks: number; avg_ms: number; avg_tps: number; error_rate: number }>
   knowledge_graph: { entities: number; relations: number }
+  circuit_breaker: Array<{ tool: string; failures: number; open: boolean; cooldown_remaining_s: number }>
   vram: { used_mb: number; total_mb: number; free_mb: number; pct: number }
 }> {
   return req('/metrics')
