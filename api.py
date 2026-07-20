@@ -448,6 +448,13 @@ async def kg_query(topic: str = "", limit: int = 20):
     return {"topic": topic, "facts": kg.query(topic, max_results=min(limit, 50))}
 
 
+@app.post("/kg/consolidate")
+async def kg_consolidate(max_age_days: int = 90, min_count: int = 2):
+    from knowledge_graph import KnowledgeGraph
+    kg = KnowledgeGraph()
+    return kg.consolidate(max_age_days=max_age_days, min_count=min_count)
+
+
 @app.get("/memory/short-term/{session_id}")
 async def memory_short_term(session_id: str):
     from memory import Memory
