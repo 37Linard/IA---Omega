@@ -46,3 +46,23 @@ def test_all_specialists_have_required_keys():
         assert "label" in spec
         assert "tools" in spec
         assert "hint" in spec
+
+
+def test_no_tool_is_orphaned_from_every_specialist():
+    """Regressão: get_crypto existia como tool mas não estava na lista de nenhum
+    especialista — SYSTEM_PROMPT mandava usar get_crypto pra bitcoin, mas o
+    especialista roteado (pesquisador) fisicamente não tinha a tool disponível,
+    então sempre caía em web_search. 'geral' não conta (pega tudo por padrão,
+    não prova que a tool foi intencionalmente atribuída a algum domínio)."""
+    assigned = {t for name, spec in SPECIALISTS.items() if name != "geral" for t in spec["tools"]}
+    assert "get_crypto" in assigned
+    assert "get_currency" in assigned
+
+
+def test_bitcoin_task_routes_to_specialist_with_get_crypto():
+    hits = domain_hits("qual o preço do bitcoin agora?")
+    assert hits, "nenhum especialista detectado pra pergunta de bitcoin"
+    for name in hits:
+        assert "get_crypto" in SPECIALISTS[name]["tools"], (
+            f"especialista '{name}' detectado pra bitcoin mas sem get_crypto no toolset"
+        )

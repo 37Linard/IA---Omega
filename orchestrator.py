@@ -39,8 +39,8 @@ def list_specialist_models() -> dict[str, str]:
 SPECIALISTS = {
     "pesquisador": {
         "label": "Pesquisador",
-        "tools": ["web_search", "fetch_page", "http_request", "get_currency", "rag_search"],
-        "hint":  "pesquisa, notícia, URL, API, cotação, câmbio, moeda, dólar, euro, verificar fatos",
+        "tools": ["web_search", "fetch_page", "http_request", "get_currency", "get_crypto", "rag_search"],
+        "hint":  "pesquisa, notícia, URL, API, cotação, câmbio, moeda, dólar, euro, bitcoin, cripto, criptomoeda, ethereum, verificar fatos",
     },
     "arquivos": {
         "label": "Gerenciador de Arquivos",
