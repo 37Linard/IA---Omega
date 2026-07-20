@@ -361,6 +361,8 @@ function HealthModal({ onClose }: { onClose: () => void }) {
   const inf = metrics?.inference
   const vram = metrics?.vram
   const tools = metrics?.tools ?? []
+  const llmCalls = metrics?.llm_calls ?? []
+  const kg = metrics?.knowledge_graph
 
   return (
     <div
@@ -493,6 +495,44 @@ function HealthModal({ onClose }: { onClose: () => void }) {
               </div>
             )}
           </div>
+
+          {/* LLM call spans (tracing.py) */}
+          <div>
+            <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)', marginBottom: '10px', letterSpacing: '0.05em' }}>MODELOS LLM — ÚLTIMAS 24H</p>
+            {llmCalls.length === 0 ? (
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', padding: '12px' }}>Nenhuma chamada registrada ainda.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '220px', overflowY: 'auto' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto auto', gap: '8px', padding: '4px 8px', fontSize: '10px', fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
+                  <span>MODELO</span><span style={{ textAlign: 'right' }}>CHAMADAS</span><span style={{ textAlign: 'right' }}>AVG</span><span style={{ textAlign: 'right' }}>TPS</span><span style={{ textAlign: 'right' }}>ERRO</span>
+                </div>
+                {llmCalls.map(m => (
+                  <div key={m.model} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto auto auto', gap: '8px', padding: '6px 8px', background: 'var(--surface-hover)', borderRadius: '6px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '12px', color: 'var(--text-primary)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {m.model}{m.fallbacks > 0 && <span style={{ color: '#fbbf24' }}> ⚠{m.fallbacks}</span>}
+                    </span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'right' }}>{m.calls}×</span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'right' }}>{m.avg_ms}ms</span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'right' }}>{m.avg_tps}</span>
+                    <span style={{ fontSize: '11px', fontWeight: 600, textAlign: 'right', color: m.error_rate === 0 ? '#4ade80' : m.error_rate <= 20 ? '#fbbf24' : '#f87171' }}>
+                      {m.error_rate}%
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Knowledge graph */}
+          {kg && (kg.entities > 0 || kg.relations > 0) && (
+            <div>
+              <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)', marginBottom: '10px', letterSpacing: '0.05em' }}>GRAFO DE CONHECIMENTO</p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <MetricCard label="Entidades" value={`${kg.entities}`} unit="nós" color="#a78bfa" />
+                <MetricCard label="Relações" value={`${kg.relations}`} unit="triplas" color="#60a5fa" />
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
