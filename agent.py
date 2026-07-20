@@ -17,6 +17,7 @@ from config import TOOL_TIMEOUT, TOOL_TIMEOUTS, MAX_TOOL_CALLS, MAX_TOOL_RETRIES
 import audit
 from memory import Memory
 from user_profile import UserProfile
+from tools import _schema as tool_schema
 
 ERROR_LOG = os.path.join(os.path.dirname(__file__), "workspace", "error_log.json")
 
@@ -391,6 +392,11 @@ class ReActAgent:
         self._tool_calls += 1
         if self._tool_calls > MAX_TOOL_CALLS:
             return f"Bloqueado: limite de {MAX_TOOL_CALLS} chamadas de ferramentas atingido nesta tarefa."
+        # Schema shallow — pega campo obrigatório faltando/enum inválido ANTES de
+        # rodar a tool ou (pior) disparar HITL pra uma chamada já condenada a falhar.
+        schema_error = tool_schema.validate(action, action_input)
+        if schema_error:
+            return schema_error
         # HITL gate — pausa e pede aprovação antes de ferramentas do(s) tier(s) configurado(s)
         if HITL_ENABLED and self._tool_risk(action) in HITL_GATE_TIERS:
             if not self._hitl_gate(action, action_input):
