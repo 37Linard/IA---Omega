@@ -455,6 +455,18 @@ async def kg_consolidate(max_age_days: int = 90, min_count: int = 2):
     return kg.consolidate(max_age_days=max_age_days, min_count=min_count)
 
 
+@app.get("/trace/llm/stats")
+async def trace_llm_stats(days: int = 1):
+    import tracing
+    return tracing.stats(days=days)
+
+
+@app.get("/trace/llm/recent")
+async def trace_llm_recent(limit: int = 50):
+    import tracing
+    return tracing.recent(limit=min(limit, 200))
+
+
 @app.get("/memory/short-term/{session_id}")
 async def memory_short_term(session_id: str):
     from memory import Memory
