@@ -13,7 +13,7 @@ if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-from config import TOOL_TIMEOUT, TOOL_TIMEOUTS, MAX_TOOL_CALLS, MAX_TOOL_RETRIES, MAX_STEPS, REFLECTION_ENABLED, REFLECTION_THRESHOLD, HITL_ENABLED, HITL_BEFORE_TOOLS, TASK_TIMEOUT
+from config import TOOL_TIMEOUT, TOOL_TIMEOUTS, MAX_TOOL_CALLS, MAX_TOOL_RETRIES, MAX_STEPS, REFLECTION_ENABLED, REFLECTION_THRESHOLD, HITL_ENABLED, HITL_GATE_TIERS, TOOL_RISK_TIERS, DEFAULT_TOOL_RISK, TASK_TIMEOUT
 import audit
 from memory import Memory
 from user_profile import UserProfile
@@ -359,6 +359,9 @@ class ReActAgent:
 
         return action, action_input
 
+    def _tool_risk(self, action: str) -> str:
+        return TOOL_RISK_TIERS.get(action, DEFAULT_TOOL_RISK)
+
     def _hitl_gate(self, action: str, action_input) -> bool:
         """Emite hitl_request, bloqueia thread até usuário aprovar/rejeitar ou timeout."""
         import uuid as _uuid
@@ -370,6 +373,7 @@ class ReActAgent:
                 "type":    "hitl_request",
                 "id":      hitl_id,
                 "action":  action,
+                "risk":    self._tool_risk(action),
                 "input":   action_input if isinstance(action_input, dict) else str(action_input),
                 "message": f"Agente quer executar '{action}'. Aprovar?",
             })
@@ -387,8 +391,8 @@ class ReActAgent:
         self._tool_calls += 1
         if self._tool_calls > MAX_TOOL_CALLS:
             return f"Bloqueado: limite de {MAX_TOOL_CALLS} chamadas de ferramentas atingido nesta tarefa."
-        # HITL gate — pausa e pede aprovação antes de ferramentas sensíveis
-        if HITL_ENABLED and action in HITL_BEFORE_TOOLS:
+        # HITL gate — pausa e pede aprovação antes de ferramentas do(s) tier(s) configurado(s)
+        if HITL_ENABLED and self._tool_risk(action) in HITL_GATE_TIERS:
             if not self._hitl_gate(action, action_input):
                 return "Acao cancelada pelo usuario (Human-in-the-Loop)."
         t0 = time.monotonic()
