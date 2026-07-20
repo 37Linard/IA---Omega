@@ -660,6 +660,7 @@ class ReActAgent:
         self.scratchpad  = []
         self._tool_calls = 0
         self._reflected  = False   # previne loop infinito de reflection
+        self._reflection_candidate = None  # (score, answer) da 1ª tentativa — self-consistency
         log.info("TAREFA: %s", task)
 
         self.profile.observe_message(task)
@@ -827,6 +828,12 @@ class ReActAgent:
                         # Streaming já emitiu tokens — reseta conteúdo no frontend
                         if _fs[0]:
                             emit({"type": "reset_content", "content": ""})
+                        # Guarda essa tentativa — reescrever não garante melhora (é o mesmo
+                        # modelo pequeno reescrevendo a partir do mesmo scratchpad que já
+                        # produziu a resposta fraca). Self-consistency compara as duas no
+                        # final e fica com a de maior score, em vez de aceitar a reescrita
+                        # às cegas só por ser a mais recente.
+                        self._reflection_candidate = (score, action_input)
                         retry_hint = (
                             f"Thought: Minha resposta foi avaliada com score {score}/5 (minimo={REFLECTION_THRESHOLD}).\n"
                             + (f"Problemas: {'; '.join(issues)}\n" if issues else "")
@@ -836,6 +843,30 @@ class ReActAgent:
                         self.scratchpad.append(retry_hint)
                         log.info("REFLECTION: reescrevendo resposta...")
                         continue
+
+                elif REFLECTION_ENABLED and self._reflection_candidate is not None:
+                    # Segunda Final Answer, depois de um retry por score baixo — reflete
+                    # de novo (self-consistency: melhor-de-2, não "última resposta vence").
+                    score1, answer1 = self._reflection_candidate
+                    self._reflection_candidate = None
+                    score2, hint2, issues2 = self._reflect(task, action_input)
+                    better_is_first = score1 > score2
+                    emit({
+                        "type":     "reflection",
+                        "content":  f"2ª tentativa: {score2}/5 (1ª foi {score1}/5) — self-consistency ficou com a {'1ª' if better_is_first else '2ª'}",
+                        "score":    score2,
+                        "accepted": True,
+                    })
+                    log.info("SELF-CONSISTENCY: tentativa1=%d tentativa2=%d -> usando %s",
+                              score1, score2, "1a" if better_is_first else "2a")
+                    if better_is_first:
+                        action_input = answer1
+                        emit({"type": "reset_content", "content": ""})
+                        emit({"type": "final", "content": action_input})
+                        self.memory.save_session_with_llm(task, action_input[:200], self.scratchpad, self.llm, self.session_id)
+                        self.conversation = self.conversation[-4:]
+                        self.conversation.append({"task": task, "result": action_input[:400]})
+                        return action_input
 
                 if not _fs[0]:
                     emit({"type": "final", "content": action_input})
