@@ -30,3 +30,6 @@ accelerate
 
 # generate_chart_tool
 matplotlib
+
+# testes (dev) — rodar com: pytest
+pytest
