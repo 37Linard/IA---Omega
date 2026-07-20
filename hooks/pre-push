@@ -1,0 +1,49 @@
+#!/bin/sh
+# Roda eval_harness.py (golden tasks reais, contra o Ollama de verdade) antes
+# de git push — mas só quando algum arquivo que afeta comportamento do agente
+# mudou (agent.py, orchestrator.py, llm.py, config.py, tools/*.py). Push de
+# frontend/docs/testes não dispara isso.
+#
+# Fail-open se Ollama não estiver rodando (não é culpa do código, não trava
+# o push). Fail-closed se uma golden task falhar de verdade (regressão real
+# como o bug do get_crypto órfão) — bloqueia o push.
+#
+# Pular em emergência: git push --no-verify
+#
+# Instalado direto em .git/hooks/pre-push (não versionado por git). Esta cópia
+# em hooks/pre-push é a fonte de verdade — reinstale com:
+#   cp hooks/pre-push .git/hooks/pre-push  (ou chmod +x se perder a permissão)
+
+set -e
+
+cd "$(git rev-parse --show-toplevel)"
+
+RANGE=$(git rev-parse '@{u}' >/dev/null 2>&1 && echo '@{u}..HEAD' || echo 'HEAD~1..HEAD')
+CHANGED=$(git diff --name-only $RANGE 2>/dev/null || echo "")
+
+RELEVANT=$(printf '%s\n' "$CHANGED" | grep -E '^(agent\.py|orchestrator\.py|llm\.py|config\.py|tools/.*\.py)$' || true)
+
+if [ -z "$RELEVANT" ]; then
+    exit 0
+fi
+
+echo "pre-push: arquivos de comportamento do agente mudaram:"
+printf '%s\n' "$RELEVANT" | sed 's/^/  - /'
+
+if ! curl -s -m 3 http://localhost:11434/api/tags >/dev/null 2>&1; then
+    echo "pre-push: Ollama não respondeu em localhost:11434 — pulando eval_harness (fail-open)."
+    exit 0
+fi
+
+PYTHON="/c/Users/User/AppData/Local/Python/pythoncore-3.14-64/python.exe"
+[ -f "$PYTHON" ] || PYTHON="python"
+
+echo "pre-push: rodando golden tasks (eval_harness.py)..."
+if ! "$PYTHON" eval_harness.py; then
+    echo ""
+    echo "pre-push: eval_harness encontrou falha real — push BLOQUEADO."
+    echo "Revise a saída acima. Pra pular em emergência: git push --no-verify"
+    exit 1
+fi
+
+exit 0
