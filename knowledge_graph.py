@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import threading
+from datetime import datetime, timedelta
 
 log = logging.getLogger(__name__)
 
@@ -42,19 +43,26 @@ class KnowledgeGraph:
         if not all([subject, predicate, obj]):
             return
 
+        now = datetime.now().isoformat()
+
         with self._lock:
             for e in [subject, obj]:
                 if e not in self._graph["entities"]:
-                    self._graph["entities"][e] = {"count": 0}
+                    self._graph["entities"][e] = {"count": 0, "first_seen": now, "last_seen": now}
                 self._graph["entities"][e]["count"] += 1
+                self._graph["entities"][e]["last_seen"] = now
 
             for rel in self._graph["relations"]:
                 if rel["s"] == subject and rel["p"] == predicate and rel["o"] == obj:
                     rel["count"] += 1
+                    rel["last_seen"] = now
                     self._save()
                     return
 
-            self._graph["relations"].append({"s": subject, "p": predicate, "o": obj, "count": 1})
+            self._graph["relations"].append({
+                "s": subject, "p": predicate, "o": obj, "count": 1,
+                "first_seen": now, "last_seen": now,
+            })
 
             # Prune se muito grande
             if len(self._graph["relations"]) > MAX_RELATIONS:
@@ -125,6 +133,42 @@ class KnowledgeGraph:
                     log.debug("KnowledgeGraph: %d triplas extraídas", len(triples))
         except Exception as e:
             log.debug("KnowledgeGraph._extract: %s", e)
+
+    def consolidate(self, max_age_days: int = 90, min_count: int = 2) -> dict:
+        """Decay: remove relações velhas e pouco reforçadas (last_seen > max_age_days
+        E count < min_count) e entidades que ficaram órfãs/fracas junto. Relações
+        antigas sem 'last_seen' (dados de antes dessa feature) nunca são removidas —
+        sem timestamp não dá pra julgar idade, erra pro lado de preservar."""
+        cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
+
+        with self._lock:
+            before_rel = len(self._graph["relations"])
+            kept_relations = []
+            for rel in self._graph["relations"]:
+                last_seen = rel.get("last_seen", "")
+                stale     = bool(last_seen) and last_seen < cutoff
+                if stale and rel.get("count", 1) < min_count:
+                    continue
+                kept_relations.append(rel)
+            self._graph["relations"] = kept_relations
+            removed_relations = before_rel - len(kept_relations)
+
+            referenced = {r["s"] for r in kept_relations} | {r["o"] for r in kept_relations}
+            before_ent = len(self._graph["entities"])
+            self._graph["entities"] = {
+                e: data for e, data in self._graph["entities"].items()
+                if e in referenced or data.get("count", 0) >= min_count
+            }
+            removed_entities = before_ent - len(self._graph["entities"])
+
+            if removed_relations or removed_entities:
+                self._save()
+
+        log.info(
+            "KnowledgeGraph.consolidate: -%d relações, -%d entidades (max_age_days=%d, min_count=%d)",
+            removed_relations, removed_entities, max_age_days, min_count,
+        )
+        return {"removed_relations": removed_relations, "removed_entities": removed_entities}
 
     def stats(self) -> dict:
         with self._lock:
