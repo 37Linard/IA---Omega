@@ -59,8 +59,9 @@ SPECIALISTS = {
     },
     "comunicacao": {
         "label": "Comunicação",
-        "tools": ["send_email", "remember_fact", "notion", "slack"],
-        "hint":  "email, memorizar, lembrar, guardar fato, preferência, Notion, Slack, mensagem",
+        "tools": ["send_email", "remember_fact", "notion", "slack", "schedule_task"],
+        "hint":  "email, memorizar, lembrar, guardar fato, preferência, Notion, Slack, mensagem, "
+                 "agendar, agendamento, agenda, lembrete, todo dia, toda manhã, todos os dias, diariamente",
     },
     "visao": {
         "label": "Visão",

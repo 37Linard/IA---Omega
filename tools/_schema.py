@@ -54,6 +54,11 @@ TOOL_SCHEMAS = {
         "enum": {"action": ["list", "read", "create", "update"]},
         "required_by_action": {"read": ["file_id"], "update": ["file_id"]},
     },
+    "schedule_task": {
+        "required": ["action"],
+        "enum": {"action": ["create", "list", "remove"]},
+        "required_by_action": {"create": ["task", "hour"], "remove": ["id"]},
+    },
 }
 
 
