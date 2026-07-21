@@ -214,6 +214,38 @@ class ReActAgent:
         lo = output.lstrip()[:120].lower()
         return any(s in lo for s in ("erro:", "error:", "traceback", "exception:", "bloqueado:"))
 
+    _ERROR_ACK_WORDS = ("erro", "falh", "não foi possível", "nao foi possivel",
+                        "não consegui", "nao consegui", "não existe", "nao existe",
+                        "não encontr", "nao encontr", "não há", "nao ha")
+
+    def _last_observation(self) -> str:
+        for line in reversed(self.scratchpad):
+            if line.startswith("Observation:"):
+                return line[len("Observation:"):].strip()
+        return ""
+
+    def _guard_final_answer(self, final_answer: str, emit=None) -> str:
+        """Contra Final Answer que ignora um erro real da última Observation.
+        Visto ao vivo: schedule_task remove com id inválido — a tool recusou
+        certo, mas o modelo escreveu 'removido com sucesso' mesmo assim.
+        Checagem determinística (não é outra chamada de LLM se autocorrigindo —
+        já vimos reflection também não pegar esse tipo de erro).
+
+        Emite um step 'error' separado (visível mesmo se a resposta já foi
+        streamada token a token pro frontend antes de chegar aqui — nesse
+        caso só prependar no texto retornado não apareceria) e também
+        prependa no texto retornado, pro aviso ficar salvo em memory/histórico."""
+        last_obs = self._last_observation()
+        if not last_obs or not self._is_tool_error(last_obs):
+            return final_answer
+        fa_lower = final_answer.lower()
+        if any(w in fa_lower for w in self._ERROR_ACK_WORDS):
+            return final_answer
+        warning = f"A última ação retornou um erro (\"{last_obs[:200]}\") — a resposta abaixo pode estar incorreta."
+        if emit:
+            emit({"type": "error", "content": warning})
+        return f"⚠️ {warning}\n\n{final_answer}"
+
     def _build_tools_description(self) -> str:
         return "\n".join(
             f"- {name}: {tool.description}"
@@ -320,6 +352,8 @@ class ReActAgent:
         # Fallback: retorna string
         return text
 
+    _FINAL_ANSWER_ALIASES = {"final_answer", "finalanswer", "final answer", "answer", "respond", "done"}
+
     def _parse_response(self, response: str):
         # Verifica Action ANTES de Final Answer
         # LLM às vezes gera Action + Final Answer juntos — executa ferramenta primeiro
@@ -349,6 +383,30 @@ class ReActAgent:
 
         raw_input = input_match.group(1).strip()
         action_input = self._extract_json(raw_input)
+
+        # Modelo às vezes escreve "Action: final_answer" (nome de tool que não
+        # existe) em vez do formato literal "Final Answer: ...". Visto ao vivo:
+        # depois de alguns erros de tool, o modelo tentava "concluir" chamando
+        # final_answer/done/respond como se fossem ferramentas, esgotando o
+        # limite de passos sem nunca produzir uma resposta de verdade. Detecta
+        # essa intenção antes de falhar com "ferramenta não existe".
+        if action not in self.tools and any(alias in action.strip().lower() for alias in self._FINAL_ANSWER_ALIASES):
+            text = ""
+            if isinstance(action_input, dict):
+                for key in ("message", "text", "answer", "content", "response", "final_answer", "resposta", "output"):
+                    if action_input.get(key):
+                        text = str(action_input[key])
+                        break
+                if not text:
+                    # último recurso: primeiro valor string não vazio do dict
+                    for v in action_input.values():
+                        if isinstance(v, str) and v.strip():
+                            text = v
+                            break
+            else:
+                text = str(action_input) if action_input else ""
+            if text:
+                return "Final Answer", text
 
         # Valida ferramenta existe
         if action not in self.tools:
@@ -560,6 +618,7 @@ class ReActAgent:
                 continue
 
             if action == "Final Answer":
+                action_input = self._guard_final_answer(action_input, emit=emit)
                 emit({"type": "observation", "content": f"âœ“ Passo {step_num} concluído: {action_input[:150]}"})
                 return action_input
 
@@ -913,6 +972,7 @@ class ReActAgent:
                         self.conversation.append({"task": task, "result": action_input[:400]})
                         return action_input
 
+                action_input = self._guard_final_answer(action_input, emit=emit)
                 if not _fs[0]:
                     emit({"type": "final", "content": action_input})
                 self.memory.save_session_with_llm(task, action_input[:200], self.scratchpad, self.llm, self.session_id)
