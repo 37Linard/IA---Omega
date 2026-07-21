@@ -640,6 +640,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     except WebSocketDisconnect:
         agent.cancel()
+        agent.memory.end_session(session_id, llm)
 
 
 @app.get("/{full_path:path}", include_in_schema=False)
