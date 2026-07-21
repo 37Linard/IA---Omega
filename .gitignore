@@ -32,6 +32,9 @@ test.txt
 .env
 .env.*
 secrets.json
+config.py
+config.local.py
+*.local.py
 
 # Frontend
 frontend/node_modules/
