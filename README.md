@@ -1,11 +1,13 @@
-# 🤖 Agente IA Local — v1.1
+# 🤖 Agente IA Local — v1.3
 
 > Assistente de IA autônomo rodando **100% na sua máquina** — sem APIs externas, sem custos por token, sem dados saindo do seu PC.
 
-Usa Ollama para inferência local, arquitetura ReAct para raciocínio passo a passo, e 30 ferramentas reais para executar tarefas complexas.
+Usa Ollama para inferência local, arquitetura ReAct para raciocínio passo a passo, e 32 ferramentas reais para executar tarefas complexas.
 
 **v1.0** — Tiered Memory · Reflection Loop · Multi-model por especialista · WASM/Docker Sandbox · Visual Browser · NOC Dashboard + HITL
 **v1.1** — Geração de imagem local (SD-turbo) · LanceDB (substituiu ChromaDB) · Export de conversa pro Obsidian · Auto-detect de nível técnico · Plugin manager sandboxado
+**v1.2** — Refino visual do frontend · Fontes de pesquisa ao vivo no chat · `generate_image` com seed/múltiplas imagens/upscale
+**v1.3** — Testes automatizados (pytest) · HITL por camada de risco · Isolamento least-privilege por especialista · Prompt-injection guard · Schema validado por tool · Circuit breaker · Eval harness + git hook pre-push · Memória episódica cross-sessão · Plan-then-Execute persistido em disco · Execução proativa (`schedule_task`) · Guards de fidelidade da resposta final
 
 ---
 
@@ -86,20 +88,21 @@ SCHEDULED_TASKS = [
 
 ---
 
-## 🛠️ 30 Ferramentas
+## 🛠️ 32 Ferramentas
 
-O agente decide sozinho qual usar baseado na tarefa.
+O agente decide sozinho qual usar baseado na tarefa. Todo input é validado contra schema antes de executar (`tools/_schema.py`), e tools que ingerem conteúdo externo (web/páginas/arquivos) passam por guard de prompt-injection (`tools/_security.py`).
 
 | Categoria | Ferramentas |
 |-----------|------------|
 | **Web** | `web_search`, `fetch_page`, `http_request`, `browser` (Playwright) |
 | **Arquivos** | `read_file`, `write_file`, `list_directory` |
-| **Código** | `run_python` (Docker sandbox), `run_sql`, `terminal` (sandboxed), `git` |
+| **Código** | `run_python` (sandbox), `run_sql`, `terminal` (sandboxed), `git` |
 | **Dados** | `read_spreadsheet` (CSV/Excel), `generate_chart` (matplotlib), `generate_report`, `rag_search`, `get_crypto` |
 | **Visão** | `analyze_image` (LLaVA multimodal), `generate_image` (Stable Diffusion local — sd-turbo) |
 | **Memória** | `remember_fact`, `save_note` (Obsidian) |
 | **Computer Use** | `screenshot`, `keyboard`, `mouse`, `clipboard` |
-| **Integrações** | `email`, `notion`, `slack`, `google_drive`, `get_currency` |
+| **Automação** | `schedule_task` (agente cria/lista/remove suas próprias tarefas agendadas via chat) |
+| **Integrações** | `email`, `notion`, `slack`, `discord_notify` (webhook, código pronto/não configurado), `google_drive`, `get_currency` |
 | **Dev/teste** | `echo` (smoke test, não usado em produção) |
 
 ### Sandbox de segurança
@@ -224,9 +227,9 @@ TASK_TIMEOUT      = 300             # timeout total da tarefa
 REFLECTION_ENABLED   = True
 REFLECTION_THRESHOLD = 2            # retry se score <= 2 (1-5)
 
-# Human-in-the-Loop
+# Human-in-the-Loop — por camada de risco (read/write/destructive), não lista fixa de tools
 HITL_ENABLED         = False
-HITL_BEFORE_TOOLS    = ["email", "write_file", "terminal"]
+HITL_GATE_TIERS      = ["destructive"]   # quais tiers pausam pra aprovação quando HITL_ENABLED=True
 
 # Especialistas com modelos diferentes
 SPECIALIST_MODELS = {
@@ -283,13 +286,19 @@ Ver a docstring de `plugin_manager.py` pro modelo de segurança completo. Nunca 
 ## 🔒 Segurança e Privacidade
 
 - **Zero dados externos** — nenhuma chamada para OpenAI, Anthropic ou qualquer API de IA
-- **Docker sandbox** — `run_python` executa em container isolado sem acesso à rede ou filesystem
+- **Sandbox** — `run_python` isolado (WASM → Docker → local), sem acesso à rede ou filesystem do host
 - **Whitelist de comandos** — `terminal` só executa comandos explicitamente permitidos
 - **SSRF protection** — `http_request` bloqueia IPs privados (127.x, 192.168.x, 10.x)
 - **Whitelist de pastas** — `read_file` e `list_directory` só acessam pastas configuradas
 - **Audit log** — toda chamada de ferramenta é gravada em SQLite (`workspace/audit.db`)
 - **Rate limiting** — 60 req/min por IP
 - **JWT opcional** — ative com `AUTH_PASSWORD` em `config.py`
+- **HITL por camada de risco** — `TOOL_RISK_TIERS` classifica cada tool em read/write/destructive; `HITL_GATE_TIERS` define quais tiers pausam pra aprovação humana quando `HITL_ENABLED=True` (substitui lista fixa de tool names, que tinha bug de nome divergente)
+- **Isolamento por especialista (least privilege)** — tarefa multi-domínio libera só a união das tools dos domínios detectados, não o toolset inteiro do sistema
+- **Prompt-injection guard** — tools que ingerem conteúdo externo (web/páginas/arquivos) sanitizadas contra instrução embutida no conteúdo
+- **Schema por tool** — input validado antes de executar, rejeita malformado antes de chegar na tool
+- **Circuit breaker** — para de tentar tool quebrada repetidamente; alerta de taxa de erro alta no Dashboard
+- **Eval harness + git hook pre-push** — golden tasks rodam contra o agente real (Ollama) automaticamente antes de permitir push
 
 > ⚠️ **Não commite** `gdrive_credentials.json`, `gdrive_token.json`, `workspace/` ou `agent_memory.json` — esses arquivos contêm dados pessoais e tokens OAuth.
 
@@ -343,7 +352,11 @@ agente-ia-local/
 ├── requirements.txt
 ├── iniciar.bat          # Backend (porta 8000)
 ├── iniciar_frontend.bat # Backend + Next.js (porta 3000)
-├── tools/               # 30 ferramentas — adicione arquivos aqui
+├── tools/               # 32 ferramentas — adicione arquivos aqui
+├── tests/               # pytest — suite automatizada
+├── eval/                # golden tasks (eval harness) — roda contra o agente real (Ollama)
+├── hooks/                # git hook pre-push — roda eval/golden_tasks.py antes de liberar push
+├── sandbox_wasm/        # binário CPython/WASI (baixado por download_wasm_sandbox.bat)
 └── frontend/            # Next.js 16 + React 19 + TypeScript + Tailwind v4
 ```
 
@@ -354,7 +367,7 @@ agente-ia-local/
 ```
 # requirements.txt
 requests
-duckduckgo-search
+ddgs
 fastapi
 uvicorn[standard]
 beautifulsoup4
@@ -362,33 +375,35 @@ python-multipart
 lancedb
 fastembed
 pypdf
-rank-bm25
-python-docx
 watchdog
+pyjwt
 faster-whisper
 pyttsx3
 pyautogui
 Pillow
 pyperclip
 playwright
-PyJWT
-google-api-python-client
-google-auth-oauthlib
-google-auth-httplib2
-matplotlib
-pandas
-openpyxl
+redis
+networkx
 wasmtime
 
 # generate_image_tool (Stable Diffusion local) — opcional, downloads grandes
 torch
 diffusers
 accelerate
+
+# generate_chart_tool
+matplotlib
+
+# testes (dev) — rodar com: pytest
+pytest
 ```
 
 > `torch`/`diffusers`/`accelerate` só são necessários pra `generate_image`. No Windows com GPU, instale o `torch` com suporte CUDA **antes** de rodar `pip install -r requirements.txt` ([pytorch.org/get-started/locally](https://pytorch.org/get-started/locally)) — senão cai pra CPU automaticamente.
 >
 > `wasmtime` habilita o sandbox WASM do `run_python` — depois de instalar, rode `download_wasm_sandbox.bat` uma vez pra baixar o binário CPython/WASI (~26MB, não vai pro git).
+>
+> `redis` é opcional — `ShortTermMemory` cai pra dict em memória se o Redis não estiver rodando. `networkx` é usado pelo Knowledge Graph.
 
 ---
 
@@ -407,12 +422,31 @@ accelerate
 ### v1.1 — Entregue ✅
 - [x] Geração de imagens — `generate_image` (Stable Diffusion local, sd-turbo, GPU com fallback CPU) — código pronto, imagem sai como markdown inline (mesmo padrão do `browser_tool`)
 - [x] Exibir imagens geradas inline no chat (além de screenshots) — `generate_chart` agora retorna markdown com `_img_url` também; endpoint `/workspace/img/` passou a aceitar subpasta (`charts/`)
-- [x] Export de conversa para Markdown/Obsidian — botão no header (`Download`) baixa a conversa como `.md` e salva cópia em `Agente IA/Conversas/` no Obsidian (`POST /export/conversation`); funciona mesmo sem Obsidian configurado (download local sempre acontece)
+- [x] Export de conversa para Markdown/Obsidian — botão no header (`Download`) baixa a conversa como `.md` e salva cópia em `Gabriel/Projetos/Agente IA Local/Conversas/` no Obsidian (`POST /export/conversation`); funciona mesmo sem Obsidian configurado (download local sempre acontece). Toda sessão automática, export manual e `save_note` linkam a nota nova sozinhos no índice `Conversas.md` (2026-07-21)
 - [x] Auto-detect nível técnico do usuário por padrões de conversa — heurística sem LLM (jargão técnico, blocos de código, frases de "não entendi") em `user_profile.py`, EMA de score ajusta `tech_level` a cada mensagem; para automaticamente se o usuário define o nível manualmente no perfil
+
+### v1.2 — Entregue ✅
+- [x] Refino visual do frontend (modais com blur, header agrupado em clusters, feedback tátil nos botões)
+- [x] Fontes de pesquisa ao vivo no chat — painel "Fontes" agrega `web_search`/`fetch_page` sem duplicar URL
+- [x] `generate_image` — `seed` (reprodutível), `num_images` (1-4), `upscale_factor` (1-4, Lanczos)
+
+### v1.3 — Entregue ✅
+- [x] Suite de testes automatizados (pytest) — `tests/`
+- [x] HITL por camada de risco (`TOOL_RISK_TIERS`/`HITL_GATE_TIERS`) — corrigiu bug de `send_email` nunca disparando HITL
+- [x] Isolamento least-privilege por especialista em tarefa multi-domínio
+- [x] Prompt-injection guard nas tools que ingerem conteúdo externo
+- [x] Schema validado por tool antes de executar
+- [x] Circuit breaker por tool + eval harness (golden tasks) + git hook pre-push
+- [x] Memória episódica cross-sessão — recall da sessão anterior mesmo após TTL do short-term
+- [x] Plan-then-Execute persistido em disco — retoma tarefa composta se o processo cair
+- [x] Execução proativa — tool `schedule_task`, agente se auto-agenda via chat
+- [x] Guards de fidelidade — Final Answer não pode contradizer um erro real na Observation
+- [x] Self-consistency (best-of-2) na Reflection Loop
 
 ### Futuro
 - [x] LanceDB — substituiu ChromaDB (embutido/serverless, sem servidor separado) em `memory.py` (sessions/facts) e `rag.py` (pdf_chunks) — embeddings via `embeddings.py` (Ollama nomic-embed-text, fallback fastembed local), veja `migrate_chroma_to_lancedb.py` pra portar dados antigos
 - [ ] WhatsApp Business API
+- [ ] `discord_notify` — configurar webhook real (código pronto desde 2026-07-20, nunca testado em produção)
 - [x] WASM sandbox (alternativa ao Docker — boot instantâneo) — feito, ver Fase 4
 - [x] Plugin marketplace (design + sandboxing) — `plugin_manager.py`: instala manual (nunca o agente sozinho), hash SHA-256 pinado no manifest (bloqueia supply-chain attack se o código mudar após publicado), stage→approve como dois passos separados, execução dentro do sandbox WASM (`PLUGINS_ENABLED=False` por padrão). Falta: UI de instalação/descoberta de plugins — hoje é só CLI
 
