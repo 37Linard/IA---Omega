@@ -16,6 +16,7 @@ if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
 from config import TOOL_TIMEOUT, TOOL_TIMEOUTS, MAX_TOOL_CALLS, MAX_TOOL_RETRIES, MAX_STEPS, REFLECTION_ENABLED, REFLECTION_THRESHOLD, HITL_ENABLED, HITL_GATE_TIERS, TOOL_RISK_TIERS, DEFAULT_TOOL_RISK, TASK_TIMEOUT
 import audit
 import circuit_breaker
+import plan_store
 from memory import Memory
 from user_profile import UserProfile
 from tools import _schema as tool_schema
@@ -498,6 +499,22 @@ class ReActAgent:
                 steps.append(match.group(1).strip())
         return steps if steps else [task]
 
+    _RESUME_KEYWORDS = ("continua de onde parou", "continuar de onde parou", "retoma o plano",
+                        "retomar o plano", "continua o plano", "continue o plano")
+
+    def _find_resumable_plan(self, task: str) -> dict | None:
+        """Um plano só é retomado se a tarefa atual for EXATAMENTE a mesma (texto
+        idêntico) que sobrou marcada 'running' de um crash anterior, ou se o
+        usuário pedir explicitamente pra continuar. Evita puxar um plano velho
+        e não relacionado por engano."""
+        pending = plan_store.find_incomplete()
+        if not pending:
+            return None
+        task_l = task.strip().lower()
+        same_task     = task_l == pending["task"].strip().lower()
+        wants_resume  = any(k in task_l for k in self._RESUME_KEYWORDS)
+        return pending if (same_task or wants_resume) else None
+
     def _run_step(self, step_task: str, context: dict, emit, step_num: int, total: int) -> str:
         """Executa um passo simples com contexto de passos anteriores."""
         emit({"type": "step", "content": f"Passo {step_num}/{total}: {step_task}"})
@@ -693,28 +710,44 @@ class ReActAgent:
             self.conversation.append({"task": task, "result": result[:400]})
             return result
 
-        # Tarefa composta → Plan-then-Execute
+        # Tarefa composta → Plan-then-Execute (com plano persistido em disco —
+        # se o processo cair no meio, o próximo run() com a mesma tarefa retoma
+        # do passo onde parou em vez de recomeçar do zero)
         if self._is_compound(task):
-            emit({"type": "step", "content": "Tarefa composta detectada — criando plano..."})
-            steps = self._plan(task, emit)
-            emit({"type": "thought", "content": f"Plano criado:\n" + "\n".join(f"{i+1}. {s}" for i, s in enumerate(steps))})
+            pending = self._find_resumable_plan(task)
+            if pending:
+                plan_id, steps, context, start_index = (
+                    pending["id"], pending["steps"], pending["context"], pending["current_index"]
+                )
+                emit({"type": "step", "content":
+                      f"Plano incompleto encontrado — retomando do passo {start_index+1}/{len(steps)}"})
+            else:
+                emit({"type": "step", "content": "Tarefa composta detectada — criando plano..."})
+                steps = self._plan(task, emit)
+                emit({"type": "thought", "content": f"Plano criado:\n" + "\n".join(f"{i+1}. {s}" for i, s in enumerate(steps))})
+                plan_id     = plan_store.new_id()
+                context     = {"tarefa_original": task}
+                start_index = 0
+                plan_store.save(plan_id, task, steps, context, current_index=0, session_id=self.session_id)
 
-            context = {"tarefa_original": task}
-            results = []
-            for i, step in enumerate(steps):
+            results = [context.get(f"passo_{i+1}", "") for i in range(start_index)]
+            for i in range(start_index, len(steps)):
                 if self._cancel.is_set():
                     emit({"type": "error", "content": self._cancel_message()})
                     emit({"type": "done", "content": ""})
+                    plan_store.finish(plan_id)
                     return "Cancelado."
-                result = self._run_step(step, context, emit, i + 1, len(steps))
+                result = self._run_step(steps[i], context, emit, i + 1, len(steps))
                 context[f"passo_{i+1}"] = result
                 results.append(result)
+                plan_store.update_progress(plan_id, i + 1, context)
 
             final = f"Tarefa concluída em {len(steps)} passos:\n" + "\n".join(
                 f"{i+1}. {r[:150]}" for i, r in enumerate(results)
             )
             emit({"type": "final", "content": final})
             emit({"type": "done", "content": ""})
+            plan_store.finish(plan_id)
             self.memory.save_session_with_llm(task, final[:200], results, self.llm, self.session_id)
             self.conversation = self.conversation[-4:]
             self.conversation.append({"task": task, "result": final[:400]})
