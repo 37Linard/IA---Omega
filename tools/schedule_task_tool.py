@@ -69,7 +69,7 @@ class ScheduleTaskTool:
             before = len(tasks)
             tasks  = [t for t in tasks if t["id"] != tid]
             if len(tasks) == before:
-                return f"Nenhuma tarefa agendada com id '{tid}'."
+                return f"Erro: nenhuma tarefa agendada com id '{tid}'."
             _save(tasks)
             return f"Tarefa '{tid}' removida do agendamento."
 

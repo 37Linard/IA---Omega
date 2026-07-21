@@ -66,7 +66,8 @@ def test_remove_unknown_id_reports_not_found(monkeypatch, tmp_path):
 
     result = tool.run({"action": "remove", "id": "nao-existe"})
 
-    assert "Nenhuma tarefa agendada com id" in result
+    assert result.startswith("Erro:")
+    assert "nenhuma tarefa agendada com id" in result.lower()
 
 
 def test_defaults_to_create_when_action_omitted(monkeypatch, tmp_path):
