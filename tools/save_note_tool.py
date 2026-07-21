@@ -2,14 +2,14 @@ import os
 import re
 from datetime import datetime
 
-from config import OBSIDIAN_BASE
-OBSIDIAN_DIR = os.path.join(OBSIDIAN_BASE, "Agente IA")
+from config import OBSIDIAN_BASE, link_note_in_conversas_index
+OBSIDIAN_DIR = os.path.join(OBSIDIAN_BASE, "Gabriel", "Projetos", "Agente IA Local", "Conversas")
 
 
 class SaveNoteTool:
     name = "save_note"
     description = (
-        "Salva uma nota no Obsidian (pasta Gabriel/Agente IA). "
+        "Salva uma nota no Obsidian (pasta Gabriel/Projetos/Agente IA Local/Conversas). "
         "Input: {'title': 'Título da nota', 'content': 'Conteúdo em markdown'}"
     )
 
@@ -46,6 +46,7 @@ tags: [agente-ia]
             os.makedirs(OBSIDIAN_DIR, exist_ok=True)
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(note)
-            return f"Nota salva no Obsidian: Gabriel/Agente IA/{filename}"
+            link_note_in_conversas_index(OBSIDIAN_DIR, filename)
+            return f"Nota salva no Obsidian: Gabriel/Projetos/Agente IA Local/Conversas/{filename}"
         except Exception as e:
             return f"Erro ao salvar nota: {str(e)}"

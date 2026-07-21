@@ -18,8 +18,8 @@ EPISODE_MIN_MSGS = 2   # sessão com só 1 msg (ou 0) não vira episódio — na
 MEMORY_FILE = os.path.join(os.path.dirname(__file__), "agent_memory.json")
 LANCE_MEMORY_DIR = os.path.join(os.path.dirname(__file__), "workspace", "lance_memory_db")
 
-from config import OBSIDIAN_BASE, REDIS_URL, SHORT_TERM_TTL, SHORT_TERM_MSGS
-OBSIDIAN_SESSIONS_DIR = os.path.join(OBSIDIAN_BASE, "Agente IA", "Sessões")
+from config import OBSIDIAN_BASE, REDIS_URL, SHORT_TERM_TTL, SHORT_TERM_MSGS, link_note_in_conversas_index
+OBSIDIAN_SESSIONS_DIR = os.path.join(OBSIDIAN_BASE, "Gabriel", "Projetos", "Agente IA Local", "Conversas")
 
 log = logging.getLogger(__name__)
 
@@ -291,6 +291,7 @@ class Memory:
             os.makedirs(OBSIDIAN_SESSIONS_DIR, exist_ok=True)
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(note)
+            link_note_in_conversas_index(OBSIDIAN_SESSIONS_DIR, filename)
         except Exception:
             pass
 

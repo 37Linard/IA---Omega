@@ -17,6 +17,23 @@ OBSIDIAN_BASE  = os.environ.get(
     os.path.join(_HOME, "Documents", "Obsidian Vault")
 )
 
+
+def link_note_in_conversas_index(dir_path: str, filename: str) -> None:
+    """Adiciona a nota nova no índice Conversas.md (best-effort) — sem isso a
+    nota fica órfã no grafo do Obsidian, mesmo salva na pasta certa."""
+    try:
+        index_path = os.path.join(dir_path, "Conversas.md")
+        if not os.path.exists(index_path):
+            return
+        link_name = os.path.splitext(filename)[0]
+        with open(index_path, "r", encoding="utf-8") as f:
+            if f"[[{link_name}]]" in f.read():
+                return
+        with open(index_path, "a", encoding="utf-8") as f:
+            f.write(f"- [[{link_name}]]\n")
+    except Exception:
+        pass
+
 # ── Agente ────────────────────────────────────────────────────────────────
 MAX_STEPS         = 8      # máx iterações ReAct por tarefa
 NUM_PREDICT       = 700    # tokens por step (baixo → trunca → parse error → loops extras)

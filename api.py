@@ -296,7 +296,7 @@ async def export_conversation(body: dict, _rl=Depends(_check_rate_limit)):
     import re
     import logging
     from datetime import datetime
-    from config import OBSIDIAN_BASE
+    from config import OBSIDIAN_BASE, link_note_in_conversas_index
 
     title = str(body.get("title") or "Conversa").strip()
     messages = body.get("messages")
@@ -309,7 +309,7 @@ async def export_conversation(body: dict, _rl=Depends(_check_rate_limit)):
 
     obsidian_path = None
     try:
-        conv_dir = os.path.join(OBSIDIAN_BASE, "Agente IA", "Conversas")
+        conv_dir = os.path.join(OBSIDIAN_BASE, "Gabriel", "Projetos", "Agente IA Local", "Conversas")
         os.makedirs(conv_dir, exist_ok=True)
         date_prefix = datetime.now().strftime("%Y-%m-%d")
         out_name = f"{date_prefix} — {safe_title}.md"
@@ -320,6 +320,7 @@ async def export_conversation(body: dict, _rl=Depends(_check_rate_limit)):
             filepath = os.path.join(conv_dir, out_name)
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(markdown)
+        link_note_in_conversas_index(conv_dir, out_name)
         obsidian_path = filepath
         filename = out_name
     except Exception as e:
