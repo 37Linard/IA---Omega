@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import shutil
+import threading
 from datetime import datetime, timedelta
 
 BACKUP_DIR  = os.path.join(os.path.dirname(__file__), "workspace", "backups")
@@ -11,6 +12,8 @@ FACT_TTL_DAYS = 30
 MAX_FACTS = 200   # cap de armazenamento — sessions já é limitado a 20, facts não tinha teto
 CONTEXT_MAX_FACTS = 15   # cap do que entra no prompt quando a busca semântica (LanceDB) está indisponível
 CONTEXT_FACT_CHARS = 150
+MAX_EPISODES = 50
+EPISODE_MIN_MSGS = 2   # sessão com só 1 msg (ou 0) não vira episódio — nada pra resumir
 
 MEMORY_FILE = os.path.join(os.path.dirname(__file__), "agent_memory.json")
 LANCE_MEMORY_DIR = os.path.join(os.path.dirname(__file__), "workspace", "lance_memory_db")
@@ -188,6 +191,7 @@ class VectorIndex:
 class Memory:
     def __init__(self):
         self.data       = self._load()
+        self.data.setdefault("episodes", [])
         self.index      = VectorIndex(LANCE_MEMORY_DIR)
         self.short_term = ShortTermMemory()
         self._sync_index()
@@ -209,7 +213,7 @@ class Memory:
                     return json.load(f)
             except Exception:
                 pass
-        return {"sessions": [], "facts": []}
+        return {"sessions": [], "facts": [], "episodes": []}
 
     def _sync_index(self):
         """Indexa sessões e fatos existentes que ainda não estão no ChromaDB."""
@@ -329,10 +333,89 @@ class Memory:
             fid = f"f{len(self.data['facts']) - 1}_{ts[:10]}"
             self.index.add_fact(fid, fact, ts)
 
+    # ------------------------------------------------------------------
+    # Episódios — resumo de uma sessão de conversa inteira, pra recall
+    # ("na sessão passada você pediu X") depois que o short-term (Redis,
+    # TTL 1800s) já expirou ou a aba/conexão fechou.
+    # ------------------------------------------------------------------
+    def end_session(self, session_id: str, llm=None) -> None:
+        """Chamado quando uma sessão de conversa termina (WS desconectou).
+        Resume em background — não trava o encerramento da conexão."""
+        if not session_id:
+            return
+        t = threading.Thread(target=self._end_session, args=(session_id, llm), daemon=True)
+        t.start()
+
+    def _end_session(self, session_id: str, llm=None) -> None:
+        msgs = self.short_term.get_messages(session_id)
+        if len(msgs) < EPISODE_MIN_MSGS:
+            return
+
+        summary = ""
+        if llm:
+            transcript = "\n".join(f"{m['role']}: {m['content'][:300]}" for m in msgs[-10:])
+            prompt = (
+                "Resuma em 1 frase curta (português, sem preâmbulo tipo 'A conversa foi...') "
+                "o que o usuário pediu e o que foi feito nesta conversa:\n\n"
+                f"{transcript}\n\nResumo:"
+            )
+            try:
+                summary = llm.generate(prompt).strip()[:300]
+            except Exception as e:
+                log.debug("Memory._end_session summarize: %s", e)
+
+        if not summary:
+            first_user = next((m["content"] for m in msgs if m["role"] == "user"), "")
+            summary = first_user[:200]
+        if not summary:
+            return
+
+        ts = datetime.now().isoformat()
+        self.data["episodes"].append({
+            "session_id":    session_id,
+            "timestamp":     ts,
+            "summary":       summary,
+            "message_count": len(msgs),
+        })
+        self.data["episodes"] = self.data["episodes"][-MAX_EPISODES:]
+        self._save()
+        self.short_term.clear(session_id)
+
+    def get_last_episode_context(self, exclude_session_id: str = "") -> str:
+        episodes = [e for e in self.data.get("episodes", []) if e.get("session_id") != exclude_session_id]
+        if not episodes:
+            return ""
+        last = episodes[-1]
+        return (
+            f"=== SESSÃO ANTERIOR ({self._time_ago(last['timestamp'])}) ===\n"
+            f"{last['summary']}\n"
+            f"================================\n"
+        )
+
+    @staticmethod
+    def _time_ago(ts_iso: str) -> str:
+        try:
+            dt = datetime.fromisoformat(ts_iso)
+        except Exception:
+            return ts_iso[:10]
+        secs = (datetime.now() - dt).total_seconds()
+        if secs < 3600:
+            return f"há {max(1, int(secs // 60))} min"
+        if secs < 86400:
+            return f"há {int(secs // 3600)}h"
+        return f"há {int(secs // 86400)}d"
+
     def get_context(self, task: str = "", session_id: str = "") -> str:
         self._prune_facts()
 
         lines = []
+
+        # 0. Recall da sessão anterior — só faz sentido na primeira mensagem
+        # de uma sessão nova (short-term desta sessão ainda vazio)
+        if session_id and not self.short_term.get_messages(session_id):
+            recall = self.get_last_episode_context(exclude_session_id=session_id)
+            if recall:
+                lines.append(recall)
 
         # 1. Contexto imediato (Redis / dict)
         st_ctx = self.short_term.get_context(session_id)
