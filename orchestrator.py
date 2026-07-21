@@ -312,7 +312,16 @@ class OrchestratorAgent:
         specialist_name = self._classify(task)
         spec_label      = SPECIALISTS[specialist_name]["label"]
         spec_model      = get_specialist_model(specialist_name)
-        multi_domain    = is_multi_domain(task, min_domains=2)
+        hits            = domain_hits(task)
+        # Aqui só decide AMPLIAR o toolset de UM especialista já escolhido — baixo
+        # risco (pior caso: ganha uma tool que não usa). Por isso não exige palavra
+        # de sequência como is_multi_domain (essa exige, porque decide reestruturar
+        # a tarefa inteira em Plan-then-Execute — risco maior de forçar passos numa
+        # tarefa simples). Sem isso, "Agende: todo dia às 9h me avise o preço do
+        # bitcoin" classificava como Pesquisador (por causa de "bitcoin") mas sem
+        # schedule_task disponível (só em "comunicacao") — o modelo inventava uma
+        # tool ('set_daily_reminder') que não existe.
+        multi_domain    = len(hits) >= 2
         emit({"type": "thought", "content": f"Especialista: {spec_label} · {spec_model}"})
 
         tool_names = None
@@ -321,7 +330,7 @@ class OrchestratorAgent:
             # (least privilege) em vez da lista inteira de tools do sistema — o
             # especialista continua sem acesso a terminal/git/email só porque a
             # tarefa também mencionou "arquivo".
-            hits = domain_hits(task) | {specialist_name}
+            hits = hits | {specialist_name}
             tool_names = tools_for_domains(hits)
             emit({
                 "type": "thought",
