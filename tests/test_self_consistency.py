@@ -100,6 +100,38 @@ def test_self_consistency_keeps_second_answer_when_rewrite_actually_improved(mon
     assert result == "resposta B, bem melhor"  # 2a (score 5) bateu a 1a (score 2) — comportamento normal
 
 
+def test_self_consistency_guards_first_answer_against_ignored_tool_error(monkeypatch):
+    """Bug real visto ao vivo: schedule_task remove com id inválido erra certo,
+    mas o modelo escreve 'removido com sucesso' mesmo assim. _guard_final_answer
+    pega isso no caminho normal — mas quando self-consistency escolhe a 1ª
+    tentativa (por score), esse retorno pulava o guard. Trava regressão."""
+    monkeypatch.setattr(agent_mod, "REFLECTION_ENABLED", True)
+    monkeypatch.setattr(agent_mod, "REFLECTION_THRESHOLD", 4)
+    llm = _ScriptedLLM(
+        react_responses=[
+            'Thought: vou remover.\nAction: schedule_task\nAction Input: {"action": "remove", "id": "xyz"}',
+            "Thought: pronto.\nFinal Answer: Tarefa removida com sucesso.",
+            "Thought: reescrevendo.\nFinal Answer: Removi a tarefa com sucesso, como pedido.",
+        ],
+        reflect_jsons=[
+            '{"score": 3, "issues": ["nao confirmou"], "hint": "confirme"}',
+            '{"score": 2, "issues": [], "hint": ""}',
+        ],
+    )
+    class _FakeTool:
+        description = "gerencia tarefas agendadas"
+
+    a = _bare_agent(llm)
+    a.tools = {"schedule_task": _FakeTool()}
+    a._execute_tool = lambda action, action_input: "Erro: id 'xyz' não encontrado."
+
+    result = a.run(TASK, step_callback=None)
+
+    assert result.startswith("⚠️")
+    assert "Tarefa removida com sucesso." in result
+    assert "id 'xyz' não encontrado" in result
+
+
 def test_no_retry_when_first_score_already_passes_threshold(monkeypatch):
     monkeypatch.setattr(agent_mod, "REFLECTION_ENABLED", True)
     monkeypatch.setattr(agent_mod, "REFLECTION_THRESHOLD", 3)
