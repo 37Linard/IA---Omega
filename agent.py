@@ -964,7 +964,7 @@ class ReActAgent:
                     log.info("SELF-CONSISTENCY: tentativa1=%d tentativa2=%d -> usando %s",
                               score1, score2, "1a" if better_is_first else "2a")
                     if better_is_first:
-                        action_input = answer1
+                        action_input = self._guard_final_answer(answer1, emit=emit)
                         emit({"type": "reset_content", "content": ""})
                         emit({"type": "final", "content": action_input})
                         self.memory.save_session_with_llm(task, action_input[:200], self.scratchpad, self.llm, self.session_id)
