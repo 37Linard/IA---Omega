@@ -295,6 +295,7 @@ class OrchestratorAgent:
             tools=tools,
             specialist_context=SPECIALIST_PROMPTS.get(specialist_name, ""),
             session_id=self.session_id,
+            memory=self.memory,
         )
         agent._cancel = self._cancel
         if "remember_fact" in agent.tools:
