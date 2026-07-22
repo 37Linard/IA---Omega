@@ -9,8 +9,20 @@ _PROJECT = os.path.dirname(os.path.abspath(__file__))
 
 # ── Modelo Ollama ──────────────────────────────────────────────────────────
 # Liste os modelos instalados: ollama list
-# Baixe novos: ollama pull llama3.2:3b
-OLLAMA_MODEL   = "llama3.2:3b"   # recomendado para GPUs 4-6GB VRAM
+# Baixe novos: ollama pull qwen2.5:7b-instruct-q3_K_M
+#
+# Em GPU de 6GB (ex.: RTX 2060), qwen2.5:7b no quant padrão (Q4_K_M, 4.68GB) NÃO
+# cabe inteiro na VRAM — roda parte na CPU e fica bem mais lento. O quant Q3_K_M
+# (3.81GB) cabe 100% e passou nas mesmas golden tasks (eval_harness.py) do Q4_K_M,
+# validado em 2026-07-22. Se sua GPU tem mais VRAM sobrando, pode usar "qwen2.5:7b"
+# (Q4_K_M) direto para mais qualidade. llama3.2:3b é mais rápido ainda mas ignora
+# instrução/repete tool call às vezes — não recomendado como modelo principal.
+#
+# Ganho extra de performance (sem trocar modelo): setar as env vars do Ollama
+#   OLLAMA_FLASH_ATTENTION=1  e  OLLAMA_KV_CACHE_TYPE=q8_0
+# antes de iniciar o serviço Ollama — reduz uso de VRAM e acelera geração (~30-40%
+# medido). Precisa reiniciar o app do Ollama depois de setar (setx + relançar).
+OLLAMA_MODEL   = "qwen2.5:7b-instruct-q3_K_M"
 VISION_MODEL   = "llava:7b"      # usado por analyze_image (baixe com: ollama pull llava:7b)
 OLLAMA_URL     = "http://localhost:11434"
 FALLBACK_MODEL = ""  # modelo leve pra usar se OLLAMA_MODEL travar/timeout; "" desliga fallback
