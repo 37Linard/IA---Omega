@@ -111,6 +111,7 @@ class VectorIndex:
 
             self._sessions = vector_store.LanceCollection(db, "sessions", dim)
             self._facts    = vector_store.LanceCollection(db, "facts", dim)
+            self._episodes = vector_store.LanceCollection(db, "episodes", dim)
             self._ok = True
             log.info("VectorIndex: LanceDB OK em %s (embeddings=%s, dim=%d)", persist_dir, kind, dim)
         except Exception as e:
@@ -184,6 +185,34 @@ class VectorIndex:
             log.warning("VectorIndex.search_facts: %s", e)
             return []
 
+    def add_episode(self, eid: str, summary: str, timestamp: str):
+        if not self._ok:
+            return
+        try:
+            vec = self._embed_fn([summary])[0]
+            self._episodes.upsert(
+                ids=[eid],
+                vectors=[vec],
+                documents=[summary],
+                metadatas=[{"summary": summary, "ts": timestamp}],
+            )
+        except Exception as e:
+            log.warning("VectorIndex.add_episode: %s", e)
+
+    def search_episodes(self, query: str, n: int = 3) -> list[dict]:
+        if not self._ok:
+            return []
+        k = self._safe_n(self._episodes, n)
+        if k == 0:
+            return []
+        try:
+            vec = self._embed_fn([query])[0]
+            hits = self._episodes.query(vec, k)
+            return [h["metadata"] for h in hits]
+        except Exception as e:
+            log.warning("VectorIndex.search_episodes: %s", e)
+            return []
+
 
 # ---------------------------------------------------------------------------
 # Memory — orquestra Short-Term + VectorIndex + KnowledgeGraph
@@ -230,6 +259,9 @@ class Memory:
                     text    = f.get("text", f) if isinstance(f, dict) else f
                     created = f.get("created", "") if isinstance(f, dict) else ""
                     self.index.add_fact(f"f{i}", text, created)
+            if self.index._episodes.count() == 0:
+                for i, e in enumerate(self.data.get("episodes", [])):
+                    self.index.add_episode(f"e{i}", e.get("summary", ""), e.get("timestamp", ""))
         except Exception as e:
             log.warning("_sync_index: %s", e)
 
@@ -380,6 +412,8 @@ class Memory:
         })
         self.data["episodes"] = self.data["episodes"][-MAX_EPISODES:]
         self._save()
+        eid = f"e{len(self.data['episodes']) - 1}_{ts[:10]}"
+        self.index.add_episode(eid, summary, ts)
         self.short_term.clear(session_id)
 
     def get_last_episode_context(self, exclude_session_id: str = "") -> str:
@@ -392,6 +426,20 @@ class Memory:
             f"{last['summary']}\n"
             f"================================\n"
         )
+
+    def search_episodes(self, query: str, n: int = 3) -> list[dict]:
+        """Busca semântica em resumos de sessões passadas (RAG sobre episódios).
+        Sem LanceDB, degrada pra substring case-insensitive nos resumos mais recentes."""
+        if self.index._ok:
+            hits = self.index.search_episodes(query, n=n)
+            if hits:
+                return hits
+        query_lower = query.lower()
+        matches = [
+            e for e in reversed(self.data.get("episodes", []))
+            if query_lower in e.get("summary", "").lower()
+        ]
+        return matches[:n]
 
     @staticmethod
     def _time_ago(ts_iso: str) -> str:

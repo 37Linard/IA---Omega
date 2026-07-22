@@ -23,6 +23,9 @@ class _StubShortTerm:
 class _StubIndex:
     _ok = False
 
+    def add_episode(self, eid, summary, timestamp):
+        pass
+
 
 class _StubKG:
     def get_context(self, task):
@@ -123,6 +126,36 @@ def test_get_last_episode_context_excludes_own_session():
     ctx = m.get_last_episode_context(exclude_session_id="s1")
 
     assert ctx == ""
+
+
+def test_search_episodes_falls_back_to_keyword_match_without_lancedb():
+    m = _bare_memory()
+    m.data["episodes"] = [
+        {"session_id": "s1", "timestamp": datetime.now().isoformat(),
+         "summary": "usuário pediu preço do bitcoin", "message_count": 2},
+        {"session_id": "s2", "timestamp": datetime.now().isoformat(),
+         "summary": "usuário criou arquivo teste.txt", "message_count": 2},
+    ]
+
+    hits = m.search_episodes("BITCOIN", n=3)
+
+    assert len(hits) == 1
+    assert hits[0]["summary"] == "usuário pediu preço do bitcoin"
+
+
+def test_search_episodes_returns_most_recent_first_on_fallback():
+    m = _bare_memory()
+    m.data["episodes"] = [
+        {"session_id": "s1", "timestamp": datetime.now().isoformat(),
+         "summary": "tarefa X antiga", "message_count": 2},
+        {"session_id": "s2", "timestamp": datetime.now().isoformat(),
+         "summary": "tarefa X recente", "message_count": 2},
+    ]
+
+    hits = m.search_episodes("tarefa X", n=1)
+
+    assert len(hits) == 1
+    assert hits[0]["summary"] == "tarefa X recente"
 
 
 def test_get_context_injects_recall_only_on_first_message_of_new_session():
