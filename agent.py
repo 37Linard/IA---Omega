@@ -163,11 +163,11 @@ REGRAS CRÍTICAS:
 
 
 class ReActAgent:
-    def __init__(self, llm, tools: list, specialist_context: str = "", session_id: str = ""):
+    def __init__(self, llm, tools: list, specialist_context: str = "", session_id: str = "", memory=None):
         self.llm                = llm
         self.tools              = {t.name: t for t in tools} if isinstance(tools, list) else tools
         self.scratchpad         = []
-        self.memory             = Memory()
+        self.memory             = memory if memory is not None else Memory()
         self.profile            = UserProfile()
         self._cancel            = threading.Event()
         self._cancel_reason     = "usuário"

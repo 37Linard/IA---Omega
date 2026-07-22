@@ -1,4 +1,6 @@
-from orchestrator import domain_hits, is_multi_domain, SPECIALISTS
+import threading
+
+from orchestrator import domain_hits, is_multi_domain, SPECIALISTS, OrchestratorAgent
 
 
 def test_domain_hits_matches_conjugated_verbs():
@@ -66,3 +68,26 @@ def test_bitcoin_task_routes_to_specialist_with_get_crypto():
         assert "get_crypto" in SPECIALISTS[name]["tools"], (
             f"especialista '{name}' detectado pra bitcoin mas sem get_crypto no toolset"
         )
+
+
+def _bare_orchestrator():
+    """OrchestratorAgent sem passar por __init__ real — evita Memory()/UserProfile()/
+    OllamaLLM reais. Só o suficiente pra exercitar _create_specialist."""
+    o = OrchestratorAgent.__new__(OrchestratorAgent)
+    o.all_tools  = {}
+    o.memory     = object()  # sentinela: só precisa ser identidade única, não Memory real
+    o.session_id = "s1"
+    o._cancel    = threading.Event()
+    return o
+
+
+def test_create_specialist_shares_orchestrator_memory_instance():
+    """Regressão: ReActAgent criava sua PRÓPRIA Memory() em vez de usar a do
+    orchestrator. save_session_with_llm gravava short_term nessa instância órfã;
+    end_session (chamado no disconnect do WS, usa orchestrator.memory) sempre via
+    short_term vazio e nunca criava episódio — achado ao vivo testando rag_search
+    de episódios (2026-07-22). _create_specialist agora deve injetar a MESMA
+    instância de memória em todo especialista que cria."""
+    o = _bare_orchestrator()
+    agent = o._create_specialist("geral")
+    assert agent.memory is o.memory
