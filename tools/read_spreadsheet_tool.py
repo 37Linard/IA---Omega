@@ -1,10 +1,10 @@
 import os
 from config import ALLOWED_READ_DIRS
+from tools._paths import is_allowed_path
 
 
 def _is_allowed(path: str) -> bool:
-    real = os.path.realpath(path)
-    return any(real.startswith(os.path.realpath(d)) for d in ALLOWED_READ_DIRS)
+    return is_allowed_path(path, ALLOWED_READ_DIRS)
 
 
 class ReadSpreadsheetTool:
@@ -43,16 +43,20 @@ class ReadSpreadsheetTool:
     def _read_csv(self, path: str, max_rows: int) -> str:
         import csv
         rows = []
+        truncated = ""
         with open(path, "r", encoding="utf-8-sig", newline="") as f:
             reader = csv.reader(f)
             for i, row in enumerate(reader):
                 if i >= max_rows + 1:
-                    rows.append([f"... ({i - 1} linhas no total, exibindo {max_rows})"])
+                    # nota de truncamento fica FORA da tabela — como célula ela levava
+                    # o mesmo corte de 30 char das colunas de dado e saía ilegível
+                    # (achado 2026-07-23: "... (200 linhas no total, exib" cortado).
+                    truncated = f"\n... ({i - 1} linhas no total, exibindo {max_rows})"
                     break
                 rows.append(row)
         if not rows:
             return "Planilha CSV vazia."
-        return self._format_table(rows, os.path.basename(path))
+        return self._format_table(rows, os.path.basename(path)) + truncated
 
     def _read_excel(self, path: str, sheet, max_rows: int) -> str:
         import openpyxl
@@ -66,9 +70,10 @@ class ReadSpreadsheetTool:
 
         rows = []
         total = 0
+        truncated = ""
         for row in ws.iter_rows(values_only=True):
             if total >= max_rows:
-                rows.append((f"... ({ws.max_row} linhas no total, exibindo {max_rows})",))
+                truncated = f"\n... ({ws.max_row} linhas no total, exibindo {max_rows})"
                 break
             rows.append(row)
             total += 1
@@ -78,7 +83,7 @@ class ReadSpreadsheetTool:
             return "Planilha Excel vazia."
 
         info = f"Arquivo: {os.path.basename(path)} | Aba: {ws.title} | Abas disponíveis: {', '.join(sheet_names)}\n"
-        return info + self._format_table(rows, ws.title)
+        return info + self._format_table(rows, ws.title) + truncated
 
     def _format_table(self, rows: list, name: str) -> str:
         if not rows:

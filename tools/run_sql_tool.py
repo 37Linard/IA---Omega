@@ -1,3 +1,4 @@
+import re
 import sqlite3
 import os
 
@@ -27,7 +28,10 @@ class RunSqlTool:
         if not query:
             return "Erro: campo 'query' obrigatório."
 
-        query_upper = query.upper()
+        # normaliza toda sequência de espaço/tab/newline pra 1 espaço antes de checar —
+        # sem isso "DROP\nTABLE x" bypassava o bloqueio (substring exige espaço literal).
+        # Achado 2026-07-23, mesma classe de bug do git_tool corrigido mais cedo hoje.
+        query_upper = re.sub(r"\s+", " ", query.upper())
         for keyword in BLOCKED:
             if keyword in query_upper:
                 return f"Bloqueado: '{keyword.strip()}' não permitido por segurança."
@@ -35,15 +39,14 @@ class RunSqlTool:
         os.makedirs(SAFE_DIR, exist_ok=True)
         db_path = os.path.join(SAFE_DIR, os.path.basename(db_name))
 
+        conn = sqlite3.connect(db_path)
         try:
-            conn   = sqlite3.connect(db_path)
             cursor = conn.cursor()
             cursor.execute(query)
 
             if query_upper.lstrip().startswith(("SELECT", "PRAGMA")):
                 rows = cursor.fetchall()
                 cols = [d[0] for d in cursor.description] if cursor.description else []
-                conn.close()
 
                 if not rows:
                     return "Query retornou 0 resultados."
@@ -60,10 +63,11 @@ class RunSqlTool:
             else:
                 conn.commit()
                 affected = cursor.rowcount
-                conn.close()
                 return f"OK. Linhas afetadas: {affected}. Banco: {db_path}"
 
         except sqlite3.Error as e:
             return f"Erro SQL: {str(e)}"
         except Exception as e:
             return f"Erro: {str(e)}"
+        finally:
+            conn.close()

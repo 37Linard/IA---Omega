@@ -1,10 +1,10 @@
 import os
 from config import ALLOWED_READ_DIRS
+from tools._paths import is_allowed_path
 
 
 def _is_allowed(path: str) -> bool:
-    real = os.path.realpath(path)
-    return any(real.startswith(os.path.realpath(d)) for d in ALLOWED_READ_DIRS)
+    return is_allowed_path(path, ALLOWED_READ_DIRS)
 
 
 class ListDirectoryTool:

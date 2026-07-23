@@ -4,6 +4,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from config import ALLOWED_READ_DIRS, VISION_MODEL
+from tools._paths import is_allowed_path
 
 SUPPORTED_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 
@@ -32,8 +33,8 @@ class AnalyzeImageTool:
         path = os.path.normpath(path)
 
         # Whitelist
-        allowed = any(path.startswith(os.path.normpath(d)) for d in ALLOWED_READ_DIRS) or \
-                  path.startswith(os.path.normpath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "workspace")))
+        workspace_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "workspace")
+        allowed = is_allowed_path(path, list(ALLOWED_READ_DIRS) + [workspace_dir])
         if not allowed:
             return f"Erro: caminho não permitido — '{path}'."
 
