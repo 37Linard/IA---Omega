@@ -132,3 +132,7 @@ TOOL_RISK_TIERS: dict = {
 DEFAULT_TOOL_RISK = "write"          # tool nova/não listada — cautela por padrão
 HITL_ENABLED       = False           # pausa agente e pede aprovação humana
 HITL_GATE_TIERS    = ["destructive"]  # quais tiers disparam HITL quando HITL_ENABLED=True
+
+# keyboard/mouse não têm whitelist possível (controle bruto de tecla/clique) —
+# única defesa real é aprovação humana, trava sempre mesmo com HITL_ENABLED=False.
+ALWAYS_HITL_TOOLS  = {"keyboard", "mouse"}

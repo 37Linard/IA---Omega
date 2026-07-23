@@ -13,7 +13,7 @@ if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-from config import TOOL_TIMEOUT, TOOL_TIMEOUTS, MAX_TOOL_CALLS, MAX_TOOL_RETRIES, MAX_STEPS, REFLECTION_ENABLED, REFLECTION_THRESHOLD, HITL_ENABLED, HITL_GATE_TIERS, TOOL_RISK_TIERS, DEFAULT_TOOL_RISK, TASK_TIMEOUT
+from config import TOOL_TIMEOUT, TOOL_TIMEOUTS, MAX_TOOL_CALLS, MAX_TOOL_RETRIES, MAX_STEPS, REFLECTION_ENABLED, REFLECTION_THRESHOLD, HITL_ENABLED, HITL_GATE_TIERS, TOOL_RISK_TIERS, DEFAULT_TOOL_RISK, TASK_TIMEOUT, ALWAYS_HITL_TOOLS
 import audit
 import circuit_breaker
 import plan_store
@@ -467,8 +467,11 @@ class ReActAgent:
         schema_error = tool_schema.validate(action, action_input)
         if schema_error:
             return schema_error
-        # HITL gate — pausa e pede aprovação antes de ferramentas do(s) tier(s) configurado(s)
-        if HITL_ENABLED and self._tool_risk(action) in HITL_GATE_TIERS:
+        # HITL gate — pausa e pede aprovação antes de ferramentas do(s) tier(s) configurado(s).
+        # keyboard/mouse travam sempre (ALWAYS_HITL_TOOLS), mesmo com HITL_ENABLED=False —
+        # não têm whitelist possível como terminal/git, só a aprovação humana protege.
+        needs_hitl = (HITL_ENABLED and self._tool_risk(action) in HITL_GATE_TIERS) or action in ALWAYS_HITL_TOOLS
+        if needs_hitl:
             if not self._hitl_gate(action, action_input):
                 return "Acao cancelada pelo usuario (Human-in-the-Loop)."
         t0 = time.monotonic()

@@ -3,8 +3,10 @@ BrowserTool — Playwright + pipeline visual (screenshot → VLM).
 Prefer visual_goto / visual_describe for understanding page content.
 """
 import base64
+import ipaddress
 import os
 from datetime import datetime
+from urllib.parse import urlparse
 
 from tools._security import wrap_untrusted
 
@@ -14,6 +16,27 @@ WORKSPACE = os.path.join(_PROJECT, "workspace")
 
 def _ts() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def _is_blocked_url(url: str) -> bool:
+    """Bloqueia localhost/IP privado/link-local — só "http..." não bastava (achado
+    2026-07-23): página maliciosa via prompt injection podia mandar o agente
+    navegar pra http://localhost:11434 (Ollama), teu FastAPI (sem auth se
+    AUTH_PASSWORD vazio), ou IP da LAN (roteador). Sem resolução DNS de propósito
+    (mantém simples, cobre o caso comum de host literal)."""
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return True
+    if not host:
+        return True
+    if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False  # hostname normal (DNS) — deixa passar
+    return ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved or ip.is_multicast
 
 
 def _take_screenshot(page, fname: str) -> str:
@@ -93,6 +116,8 @@ class BrowserTool:
                 )
                 if not url.startswith("http"):
                     return "Erro: URL deve comecar com http."
+                if _is_blocked_url(url):
+                    return "Erro: URL aponta pra host local/rede privada — bloqueado."
                 page.goto(url, timeout=20000, wait_until="domcontentloaded")
                 try:
                     page.wait_for_load_state("networkidle", timeout=5000)
@@ -128,6 +153,8 @@ class BrowserTool:
                 url = input_data.get("url", "")
                 if not url.startswith("http"):
                     return "Erro: URL deve comecar com http."
+                if _is_blocked_url(url):
+                    return "Erro: URL aponta pra host local/rede privada — bloqueado."
                 page.goto(url, timeout=20000, wait_until="domcontentloaded")
                 return f"Navegou para: {url} — titulo: {page.title()}"
 

@@ -111,3 +111,36 @@ def test_hitl_gate_emits_risk_tier_and_respects_approval():
     assert emitted[0]["action"] == "terminal"
     assert emitted[0]["risk"] == "destructive"
     assert result_box["approved"] is True
+
+
+def test_keyboard_gated_even_when_hitl_disabled_globally(monkeypatch):
+    # keyboard/mouse não têm whitelist possível (controle bruto de tecla/clique) —
+    # travam sempre, independente de HITL_ENABLED. Achado 2026-07-23.
+    monkeypatch.setattr(agent_mod, "HITL_ENABLED", False)
+    a = _bare_agent([_FakeTool("keyboard")])
+    a._hitl_gate = lambda action, action_input: False
+
+    result = a._execute_tool("keyboard", {"action": "type", "text": "oi"})
+
+    assert "cancelada" in result.lower()
+
+
+def test_mouse_gated_even_when_hitl_disabled_globally(monkeypatch):
+    monkeypatch.setattr(agent_mod, "HITL_ENABLED", False)
+    a = _bare_agent([_FakeTool("mouse")])
+    a._hitl_gate = lambda action, action_input: False
+
+    result = a._execute_tool("mouse", {"action": "click", "x": 1, "y": 1})
+
+    assert "cancelada" in result.lower()
+
+
+def test_keyboard_runs_when_gate_approved_despite_hitl_disabled(monkeypatch):
+    monkeypatch.setattr(agent_mod, "HITL_ENABLED", False)
+    monkeypatch.setattr(agent_mod.audit, "log_action", lambda *a, **k: None)
+    a = _bare_agent([_FakeTool("keyboard")])
+    a._hitl_gate = lambda action, action_input: True
+
+    result = a._execute_tool("keyboard", {"action": "type", "text": "oi"})
+
+    assert result == "ran keyboard"

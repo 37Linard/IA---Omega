@@ -26,12 +26,11 @@ class EmailTool:
         if not subject:
             return "Erro: campo 'subject' obrigatório."
 
-        msg = MIMEText(body, "plain", "utf-8")
-        msg["Subject"] = subject
-        msg["From"]    = EMAIL_FROM or SMTP_USER
-        msg["To"]      = to
-
         try:
+            msg = MIMEText(body, "plain", "utf-8")
+            msg["Subject"] = subject
+            msg["From"]    = EMAIL_FROM or SMTP_USER
+            msg["To"]      = to
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as server:
                 server.starttls()
                 server.login(SMTP_USER, SMTP_PASSWORD)
