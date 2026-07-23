@@ -86,7 +86,7 @@ class GenerateImageTool:
             if not safe_output.lower().endswith((".png", ".jpg", ".jpeg")):
                 safe_output += ".png"
 
-        from config import IMAGE_GEN_STEPS, IMAGE_GEN_SIZE, IMAGE_GEN_GUIDANCE_SCALE
+        from config import IMAGE_GEN_STEPS, IMAGE_GEN_SIZE, IMAGE_GEN_GUIDANCE_SCALE, IMAGE_GEN_UNLOAD_OLLAMA, IMAGE_GEN_DEVICE
 
         try:
             steps = max(1, min(int(params.get("steps", IMAGE_GEN_STEPS)), 8))
@@ -97,6 +97,13 @@ class GenerateImageTool:
             height = int(params.get("height", IMAGE_GEN_SIZE))
         except (TypeError, ValueError):
             width = height = IMAGE_GEN_SIZE
+
+        # descarrega Ollama ANTES do pipeline SD subir pra GPU — se descarregasse só
+        # depois (como na 1ª versão), os dois ficavam residentes ao mesmo tempo durante
+        # o carregamento do SD (medido ao vivo: 5824/6144MiB, 95% de uso, margem apertada)
+        if IMAGE_GEN_UNLOAD_OLLAMA and IMAGE_GEN_DEVICE in ("auto", "cuda") and _pipeline_device in (None, "cuda"):
+            from llm import unload_all_models
+            unload_all_models()
 
         try:
             pipe, device = _get_pipeline()
