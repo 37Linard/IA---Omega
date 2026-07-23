@@ -13,7 +13,8 @@ import voice
 
 import logging
 import threading
-from config import OLLAMA_MODEL, OLLAMA_URL, TASK_TIMEOUT, AUTH_PASSWORD, SCHEDULED_TASKS, RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW
+from config import OLLAMA_MODEL, OLLAMA_URL, TASK_TIMEOUT, AUTH_PASSWORD, JWT_SECRET, SCHEDULED_TASKS, RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW
+from health_checks import jwt_secret_warning
 import auth as _auth
 import scheduler as _scheduler
 import watcher as _watcher
@@ -236,7 +237,11 @@ async def get_health():
                "power_limit": p[6] if len(p) > 6 else "N/A"}
     except Exception:
         gpu = {}
-    return {"ollama": ollama, "gpu": gpu}
+    security = {}
+    warning = jwt_secret_warning(AUTH_PASSWORD, JWT_SECRET)
+    if warning:
+        security["warning"] = warning
+    return {"ollama": ollama, "gpu": gpu, "security": security}
 
 
 @app.get("/sandbox/status")
