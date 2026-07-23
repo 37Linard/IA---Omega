@@ -26,10 +26,36 @@ OLLAMA_MODEL   = "qwen2.5:7b-instruct-q3_K_M"
 VISION_MODEL   = "llava:7b"      # usado por analyze_image (baixe com: ollama pull llava:7b)
 OLLAMA_URL     = "http://localhost:11434"
 FALLBACK_MODEL = ""  # modelo leve pra usar se OLLAMA_MODEL travar/timeout; "" desliga fallback
+API_URL        = "http://localhost:8000"  # URL base da API (usada por tools pra gerar links de imagem)
+
+# ── Specialist models (opcional) ───────────────────────────────────────────
+# Deixe vazio ("") para herdar OLLAMA_MODEL
+MANAGER_MODEL: str = ""  # modelo pra roteamento/classificação — vazio = OLLAMA_MODEL
+SPECIALIST_MODELS: dict = {
+    # "pesquisador": "llama3.2:3b",
+    # "codigo":      "qwen2.5-coder:7b",
+}
 
 # ── Obsidian (opcional) ────────────────────────────────────────────────────
 OBSIDIAN_BASE  = os.path.join(_HOME, "Documents", "Obsidian Vault")
 # Ou defina via variável de ambiente: OBSIDIAN_BASE=/caminho/do/vault
+
+
+def link_note_in_conversas_index(dir_path: str, filename: str) -> None:
+    """Adiciona a nota nova no índice Conversas.md (best-effort) — sem isso a
+    nota fica órfã no grafo do Obsidian, mesmo salva na pasta certa."""
+    try:
+        index_path = os.path.join(dir_path, "Conversas.md")
+        if not os.path.exists(index_path):
+            return
+        link_name = os.path.splitext(filename)[0]
+        with open(index_path, "r", encoding="utf-8") as f:
+            if f"[[{link_name}]]" in f.read():
+                return
+        with open(index_path, "a", encoding="utf-8") as f:
+            f.write(f"- [[{link_name}]]\n")
+    except Exception:
+        pass
 
 # ── Agente ────────────────────────────────────────────────────────────────
 MAX_STEPS         = 10
@@ -46,6 +72,16 @@ TOOL_TIMEOUTS: dict = {    # overrides por ferramenta — usa TOOL_TIMEOUT se n�
 MAX_TOOL_CALLS    = 25     # max chamadas de ferramenta por tarefa
 MAX_TOOL_RETRIES  = 3      # tentativas de auto-correção em caso de erro
 TASK_TIMEOUT      = 300    # timeout total da tarefa em segundos
+
+# ── Reflection Loop ─────────────────────────────────────────────────────────
+REFLECTION_ENABLED   = True   # crítico avalia própria resposta antes de entregar
+REFLECTION_THRESHOLD = 2      # score mínimo (1-5) — abaixo disso reescreve (2 = só reescreve se realmente ruim)
+
+# ── Memória Tiered ───────────────────────────────────────────────────────────
+EMBED_MODEL     = "nomic-embed-text"     # embedding local via Ollama
+REDIS_URL       = "redis://localhost:6379"
+SHORT_TERM_TTL  = 1800   # segundos (30 min) — TTL do contexto imediato
+SHORT_TERM_MSGS = 10     # máx mensagens por sessão no contexto imediato
 
 # ── Autenticação ──────────────────────────────────────────────────────────
 AUTH_PASSWORD    = ""      # vazio = sem senha; preencha para proteger o acesso

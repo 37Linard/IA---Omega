@@ -20,5 +20,8 @@ jobs:
       - name: Instala dependências
         run: pip install -r requirements.txt
 
+      - name: Config de teste
+        run: cp config.example.py config.py
+
       - name: Roda testes
         run: pytest
