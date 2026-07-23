@@ -107,6 +107,25 @@ def stats(days: int = 1) -> list[dict]:
         return []
 
 
+def prune(max_age_days: int = 30) -> dict:
+    """Remove spans mais velhos que max_age_days — sem isso llm_spans cresce pra
+    sempre (1 linha por chamada LLM). Manual/sob-demanda, mesmo padrão de
+    audit.prune/knowledge_graph.consolidate."""
+    cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
+    try:
+        c = _conn()
+        before = c.execute("SELECT COUNT(*) FROM llm_spans").fetchone()[0]
+        c.execute("DELETE FROM llm_spans WHERE ts < ?", (cutoff,))
+        c.commit()
+        c.execute("VACUUM")
+        after = c.execute("SELECT COUNT(*) FROM llm_spans").fetchone()[0]
+        c.close()
+        return {"removed": before - after, "remaining": after}
+    except Exception as e:
+        log.warning("tracing.prune: %s", e)
+        return {"removed": 0, "remaining": 0, "error": str(e)}
+
+
 def recent(limit: int = 50) -> list[dict]:
     try:
         with _conn() as c:

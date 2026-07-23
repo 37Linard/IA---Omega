@@ -121,6 +121,39 @@ def test_generate_records_span_with_fallback_flag(tmp_path, monkeypatch):
     assert rows[0]["success"] == 1
 
 
+def test_prune_removes_only_spans_older_than_cutoff(tmp_path, monkeypatch):
+    monkeypatch.setattr(tracing_mod, "TRACE_DB", str(tmp_path / "traces.db"))
+    from datetime import datetime, timedelta
+    with tracing_mod._conn() as c:
+        c.execute(
+            "INSERT INTO llm_spans (ts, kind, model, duration_ms, prompt_tokens, "
+            "completion_tokens, tps, success, error, fallback_used, prompt_preview) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            ((datetime.now() - timedelta(days=60)).isoformat(), "generate", "old",
+             10.0, 0, 0, 0.0, 1, "", 0, ""),
+        )
+    tracing_mod.record_span(kind="generate", model="new", duration_ms=10.0, success=True)
+
+    result = tracing_mod.prune(max_age_days=30)
+
+    assert result["removed"] == 1
+    assert result["remaining"] == 1
+    rows = tracing_mod.recent(limit=10)
+    assert len(rows) == 1
+    assert rows[0]["model"] == "new"
+
+
+def test_prune_keeps_everything_when_nothing_is_old(tmp_path, monkeypatch):
+    monkeypatch.setattr(tracing_mod, "TRACE_DB", str(tmp_path / "traces.db"))
+    tracing_mod.record_span(kind="generate", model="a", duration_ms=10.0, success=True)
+    tracing_mod.record_span(kind="generate", model="b", duration_ms=10.0, success=True)
+
+    result = tracing_mod.prune(max_age_days=30)
+
+    assert result["removed"] == 0
+    assert result["remaining"] == 2
+
+
 def test_generate_records_span_on_total_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(tracing_mod, "TRACE_DB", str(tmp_path / "traces.db"))
     monkeypatch.setattr(llm_mod, "RETRY_DELAY", 0)

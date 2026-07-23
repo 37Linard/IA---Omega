@@ -70,6 +70,26 @@ def tool_stats(days: int = 7) -> list[dict]:
         return []
 
 
+def prune(max_age_days: int = 30) -> dict:
+    """Remove entradas mais velhas que max_age_days — sem isso audit_log cresce
+    pra sempre. Manual/sob-demanda (igual knowledge_graph.consolidate), não
+    automático: scheduler.py só roda agent.run(task), não é o lugar certo pra
+    manutenção interna."""
+    cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
+    try:
+        c = _conn()
+        before = c.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+        c.execute("DELETE FROM audit_log WHERE ts < ?", (cutoff,))
+        c.commit()
+        c.execute("VACUUM")
+        after = c.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+        c.close()
+        return {"removed": before - after, "remaining": after}
+    except Exception as e:
+        log.warning("audit.prune: %s", e)
+        return {"removed": 0, "remaining": 0, "error": str(e)}
+
+
 def query(limit: int = 100, tool_filter: str = "") -> list[dict]:
     try:
         with _conn() as c:
