@@ -15,8 +15,17 @@ BLOCKED_PATTERNS = [
     "> c:\\windows", "> c:\\system",
 ]
 
+# shell=True roda a string inteira, não só o 1º comando — sem isso a whitelist
+# só filtra a "primeira palavra" e "echo oi && del /f /q C:\..." passava reto
+# (achado real, 0 cobertura de teste). Nenhum uso legítimo dos comandos em
+# ALLOWED precisa de encadeamento/pipe/redirecionamento.
+SHELL_METACHARS = ["&", "|", ";", "`", "$(", ">", "<", "\n", "\r"]
+
 
 def _is_safe(cmd: str) -> tuple[bool, str]:
+    for meta in SHELL_METACHARS:
+        if meta in cmd:
+            return False, f"Caractere de encadeamento/redirecionamento não permitido: '{meta}'"
     lower = cmd.lower().strip()
     for pat in BLOCKED_PATTERNS:
         if pat in lower:

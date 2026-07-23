@@ -1,3 +1,4 @@
+import shlex
 import subprocess
 import os
 
@@ -5,7 +6,10 @@ ALLOWED_SUBCOMMANDS = {
     "status", "log", "diff", "branch", "show",
     "add", "commit", "stash", "tag", "fetch"
 }
-BLOCKED_FLAGS = {"--force", "-f", "--hard", "--no-verify", "--no-gpg-sign"}
+BLOCKED_LONG_FLAGS = {"--force", "--hard", "--no-verify", "--no-gpg-sign"}
+# flags curtas combinadas (ex.: "git branch -Df") bypassavam o check antigo de
+# substring ("-f" in "-Df" é False) — achado real, 0 cobertura de teste.
+BLOCKED_SHORT_CHARS = {"f"}  # letra de "-f"/"--force"
 
 
 class GitTool:
@@ -29,11 +33,20 @@ class GitTool:
         if command not in ALLOWED_SUBCOMMANDS:
             return f"Bloqueado: '{command}' não permitido. Permitidos: {sorted(ALLOWED_SUBCOMMANDS)}"
 
-        for flag in BLOCKED_FLAGS:
-            if flag in args:
-                return f"Bloqueado: flag '{flag}' não permitida."
+        try:
+            tokens = shlex.split(args) if args else []
+        except ValueError as e:
+            return f"Erro: args inválido ({e})"
 
-        cmd = ["git", command] + (args.split() if args else [])
+        for token in tokens:
+            if token in BLOCKED_LONG_FLAGS:
+                return f"Bloqueado: flag '{token}' não permitida."
+            if token.startswith("-") and not token.startswith("--"):
+                hit = BLOCKED_SHORT_CHARS & set(token[1:])
+                if hit:
+                    return f"Bloqueado: flag '-{hit.pop()}' não permitida (em '{token}')."
+
+        cmd = ["git", command] + tokens
         try:
             result = subprocess.run(
                 cmd, cwd=repo, capture_output=True, text=True, timeout=30
