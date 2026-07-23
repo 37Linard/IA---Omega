@@ -5,7 +5,11 @@ import json
 
 
 def _is_private(url: str) -> bool:
-    """Bloqueia requests para localhost e redes privadas (SSRF)."""
+    """Bloqueia requests para localhost e redes privadas (SSRF).
+    Limitação conhecida (não corrigida — fix exigiria pinning de IP, desproporcional
+    pro resto do escopo): TOCTOU de DNS rebinding — resolve aqui pra checar, mas
+    requests.get() resolve de novo ao conectar; atacante controlando o DNS podia
+    trocar o IP entre as duas resoluções. Achado 2026-07-23."""
     try:
         from urllib.parse import urlparse
         host = urlparse(url).hostname
