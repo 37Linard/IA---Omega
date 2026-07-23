@@ -165,7 +165,7 @@ async def set_model(body: dict):
     if not name:
         raise HTTPException(status_code=400, detail="model required")
     llm.model = name
-    log.info("Modelo trocado para: %s", name)
+    logging.getLogger(__name__).info("Modelo trocado para: %s", name)
     return {"model": llm.model}
 
 
