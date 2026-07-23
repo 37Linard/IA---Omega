@@ -102,7 +102,7 @@ O agente decide sozinho qual usar baseado na tarefa. Todo input é validado cont
 | **Memória** | `remember_fact`, `save_note` (Obsidian) |
 | **Computer Use** | `screenshot`, `keyboard`, `mouse`, `clipboard` |
 | **Automação** | `schedule_task` (agente cria/lista/remove suas próprias tarefas agendadas via chat) |
-| **Integrações** | `email`, `notion`, `slack`, `discord_notify` (webhook, código pronto/não configurado), `google_drive`, `get_currency` |
+| **Integrações** | `email`, `notion`, `slack`, `discord_notify` (webhook configurado e testado), `google_drive`, `get_currency` |
 | **Dev/teste** | `echo` (smoke test, não usado em produção) |
 
 ### Sandbox de segurança
@@ -320,7 +320,7 @@ Browser ──WebSocket──► FastAPI (api.py)
                        [auto-correção]
                             │
                      tool_loader.py
-                     30 tools (plugins)
+                     32 tools (plugins)
                             │
                memory.py  rag.py  user_profile.py
                LanceDB    BM25    audit.db
@@ -443,10 +443,20 @@ pytest
 - [x] Guards de fidelidade — Final Answer não pode contradizer um erro real na Observation
 - [x] Self-consistency (best-of-2) na Reflection Loop
 
+### v1.4 — Entregue ✅ (2026-07-23, hardening)
+- [x] Auditoria de segurança em todas as tools "destructive" — sandbox-escape corrigido em `terminal`/`git`, SSRF corrigido em `browser`, query injection corrigida em `google_drive`, `keyboard`/`mouse` passam a exigir aprovação humana sempre (sem whitelist possível pra controle bruto de tecla/clique)
+- [x] CI (GitHub Actions) rodando pytest a cada push/PR + secret-scanning (gitleaks) — achou e corrigiu drift real: `config.example.py` estava desatualizado o bastante pra quebrar qualquer clone novo
+- [x] `requirements.txt` com versões pinadas; 6 libs listadas mas não instaladas de verdade, corrigido
+- [x] Fix de disputa de VRAM entre Ollama e `generate_image` na GPU
+- [x] Circuit breaker com cooldown por tool (credencial faltando ≠ rede transiente) em vez de 5min fixo pra tudo
+- [x] Dashboard mostra taxa de reflection-rewrite (quanto o critic reprova a 1ª resposta)
+- [x] Retenção manual pra `audit.db`/`traces.db` (cresciam sem limite)
+- [x] mypy configurado — achou e corrigiu bug real (`log` indefinido quebrando troca de modelo pela API)
+- [x] `discord_notify` — webhook configurado e testado em produção
+
 ### Futuro
 - [x] LanceDB — substituiu ChromaDB (embutido/serverless, sem servidor separado) em `memory.py` (sessions/facts) e `rag.py` (pdf_chunks) — embeddings via `embeddings.py` (Ollama nomic-embed-text, fallback fastembed local), veja `migrate_chroma_to_lancedb.py` pra portar dados antigos
 - [ ] WhatsApp Business API
-- [ ] `discord_notify` — configurar webhook real (código pronto desde 2026-07-20, nunca testado em produção)
 - [x] WASM sandbox (alternativa ao Docker — boot instantâneo) — feito, ver Fase 4
 - [x] Plugin marketplace (design + sandboxing) — `plugin_manager.py`: instala manual (nunca o agente sozinho), hash SHA-256 pinado no manifest (bloqueia supply-chain attack se o código mudar após publicado), stage→approve como dois passos separados, execução dentro do sandbox WASM (`PLUGINS_ENABLED=False` por padrão). Falta: UI de instalação/descoberta de plugins — hoje é só CLI
 
