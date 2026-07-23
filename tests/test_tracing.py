@@ -158,6 +158,64 @@ def test_prune_keeps_everything_when_nothing_is_old(tmp_path, monkeypatch):
     assert result["remaining"] == 2
 
 
+def test_record_and_aggregate_reflection(tmp_path, monkeypatch):
+    monkeypatch.setattr(tracing_mod, "TRACE_DB", str(tmp_path / "traces.db"))
+
+    tracing_mod.record_reflection(5, 2, True)
+    tracing_mod.record_reflection(1, 2, False)
+    tracing_mod.record_reflection(4, 2, True)
+
+    result = tracing_mod.reflection_stats(days=7)
+
+    assert result["total"] == 3
+    assert result["rewrites"] == 1
+    assert result["rewrite_rate"] == round(1 / 3 * 100, 1)
+    assert result["avg_score"] == round((5 + 1 + 4) / 3, 2)
+
+
+def test_reflection_stats_empty_when_no_data(tmp_path, monkeypatch):
+    monkeypatch.setattr(tracing_mod, "TRACE_DB", str(tmp_path / "traces.db"))
+
+    result = tracing_mod.reflection_stats(days=7)
+
+    assert result == {"total": 0, "rewrites": 0, "rewrite_rate": 0.0, "avg_score": 0.0}
+
+
+def test_reflection_stats_excludes_old_rows_outside_window(tmp_path, monkeypatch):
+    monkeypatch.setattr(tracing_mod, "TRACE_DB", str(tmp_path / "traces.db"))
+    from datetime import datetime, timedelta
+    c = tracing_mod._conn()
+    with c:
+        c.execute(
+            "INSERT INTO reflections (ts, score, threshold, accepted) VALUES (?,?,?,?)",
+            ((datetime.now() - timedelta(days=30)).isoformat(), 1, 2, 0),
+        )
+    c.close()
+
+    result = tracing_mod.reflection_stats(days=7)
+
+    assert result["total"] == 0
+
+
+def test_prune_also_removes_old_reflections(tmp_path, monkeypatch):
+    monkeypatch.setattr(tracing_mod, "TRACE_DB", str(tmp_path / "traces.db"))
+    from datetime import datetime, timedelta
+    c = tracing_mod._conn()
+    with c:
+        c.execute(
+            "INSERT INTO reflections (ts, score, threshold, accepted) VALUES (?,?,?,?)",
+            ((datetime.now() - timedelta(days=60)).isoformat(), 1, 2, 0),
+        )
+    c.close()
+    tracing_mod.record_reflection(5, 2, True)
+
+    result = tracing_mod.prune(max_age_days=30)
+
+    assert result["removed"] == 1
+    assert result["remaining"] == 1
+    assert tracing_mod.reflection_stats(days=7)["total"] == 1
+
+
 def test_generate_records_span_on_total_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(tracing_mod, "TRACE_DB", str(tmp_path / "traces.db"))
     monkeypatch.setattr(llm_mod, "RETRY_DELAY", 0)

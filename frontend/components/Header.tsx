@@ -362,6 +362,7 @@ function HealthModal({ onClose }: { onClose: () => void }) {
   const vram = metrics?.vram
   const tools = metrics?.tools ?? []
   const llmCalls = metrics?.llm_calls ?? []
+  const reflection = metrics?.reflection
   const kg = metrics?.knowledge_graph
   const breakers = (metrics?.circuit_breaker ?? []).filter(b => b.open)
   // Alerta só com volume mínimo de chamadas — 1 falha isolada não é sinal de nada
@@ -455,6 +456,18 @@ function HealthModal({ onClose }: { onClose: () => void }) {
               </p>
             )}
           </div>
+
+          {/* Reflection — taxa de reescrita do critic (score < threshold na 1ª tentativa) */}
+          {reflection && reflection.total > 0 && (
+            <div>
+              <p style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-muted)', marginBottom: '10px', letterSpacing: '0.05em' }}>REFLECTION (7d)</p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
+                <MetricCard label="Reescritas" value={`${reflection.rewrite_rate}`} unit="%" color={reflection.rewrite_rate > 30 ? '#f87171' : '#4ade80'} />
+                <MetricCard label="Score médio" value={`${reflection.avg_score}`} unit="/ 5" color="#a78bfa" />
+                <MetricCard label="Avaliações" value={`${reflection.total}`} unit="total" color="#60a5fa" />
+              </div>
+            </div>
+          )}
 
           {/* VRAM */}
           {vram && vram.total_mb > 0 && (

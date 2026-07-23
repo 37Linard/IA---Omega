@@ -34,6 +34,7 @@ export async function fetchMetrics(): Promise<{
   inference: { tps: number; ttft_ms: number; context_pct: number; prompt_tokens: number; completion_tokens: number }
   tools: Array<{ tool: string; calls: number; errors: number; success_rate: number; avg_ms: number }>
   llm_calls: Array<{ model: string; calls: number; errors: number; fallbacks: number; avg_ms: number; avg_tps: number; error_rate: number }>
+  reflection: { total: number; rewrites: number; rewrite_rate: number; avg_score: number }
   knowledge_graph: { entities: number; relations: number }
   circuit_breaker: Array<{ tool: string; failures: number; open: boolean; cooldown_remaining_s: number }>
   vram: { used_mb: number; total_mb: number; free_mb: number; pct: number }

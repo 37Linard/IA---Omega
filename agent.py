@@ -15,6 +15,7 @@ if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 from config import TOOL_TIMEOUT, TOOL_TIMEOUTS, MAX_TOOL_CALLS, MAX_TOOL_RETRIES, MAX_STEPS, REFLECTION_ENABLED, REFLECTION_THRESHOLD, HITL_ENABLED, HITL_GATE_TIERS, TOOL_RISK_TIERS, DEFAULT_TOOL_RISK, TASK_TIMEOUT, ALWAYS_HITL_TOOLS
 import audit
+import tracing
 import circuit_breaker
 import plan_store
 from memory import Memory
@@ -920,6 +921,7 @@ class ReActAgent:
                 if REFLECTION_ENABLED and not self._reflected:
                     self._reflected = True
                     score, hint, issues = self._reflect(task, action_input)
+                    tracing.record_reflection(score, REFLECTION_THRESHOLD, score >= REFLECTION_THRESHOLD)
                     rc = f"Score {score}/5"
                     if issues:
                         rc += " — " + "; ".join(issues[:2])

@@ -80,6 +80,30 @@ def test_self_consistency_keeps_first_answer_when_it_scored_higher(monkeypatch):
     assert result == "resposta A"  # 1a (score 3) bateu a 2a (score 2) — self-consistency
 
 
+def test_reflection_recorded_in_tracing_for_dashboard(monkeypatch):
+    # taxa de reflection-rewrite no /metrics depende de tracing.record_reflection
+    # ser chamado na 1ª avaliação (não na 2ª, de self-consistency).
+    monkeypatch.setattr(agent_mod, "REFLECTION_ENABLED", True)
+    monkeypatch.setattr(agent_mod, "REFLECTION_THRESHOLD", 4)
+    recorded = []
+    monkeypatch.setattr(agent_mod.tracing, "record_reflection", lambda *a: recorded.append(a))
+    llm = _ScriptedLLM(
+        react_responses=[
+            "Thought: pronto.\nFinal Answer: resposta A",
+            "Thought: reescrevendo.\nFinal Answer: resposta B",
+        ],
+        reflect_jsons=[
+            '{"score": 3, "issues": [], "hint": ""}',
+            '{"score": 2, "issues": [], "hint": ""}',
+        ],
+    )
+    a = _bare_agent(llm)
+
+    a.run(TASK, step_callback=None)
+
+    assert recorded == [(3, 4, False)]  # só a 1ª avaliação, score < threshold -> accepted=False
+
+
 def test_self_consistency_keeps_second_answer_when_rewrite_actually_improved(monkeypatch):
     monkeypatch.setattr(agent_mod, "REFLECTION_ENABLED", True)
     monkeypatch.setattr(agent_mod, "REFLECTION_THRESHOLD", 4)
