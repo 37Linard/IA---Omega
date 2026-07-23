@@ -42,6 +42,16 @@ def _conn() -> sqlite3.Connection:
     """)
     c.execute("CREATE INDEX IF NOT EXISTS idx_llm_spans_ts    ON llm_spans(ts)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_llm_spans_model ON llm_spans(model)")
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS reflections (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts        TEXT    NOT NULL,
+            score     INTEGER NOT NULL,
+            threshold INTEGER NOT NULL,
+            accepted  INTEGER NOT NULL  -- score >= threshold na 1ª tentativa (0 = disparou reescrita)
+        )
+    """)
+    c.execute("CREATE INDEX IF NOT EXISTS idx_reflections_ts ON reflections(ts)")
     c.commit()
     return c
 
@@ -69,6 +79,47 @@ def record_span(
             )
     except Exception as e:
         log.warning("tracing.record_span: %s", e)
+    finally:
+        c.close()
+
+
+def record_reflection(score: int, threshold: int, accepted: bool):
+    """1 linha por 1ª avaliação de reflection (não conta a 2ª comparação de
+    self-consistency — essa não decide reescrita, só compara as 2 tentativas)."""
+    c = _conn()
+    try:
+        with c:
+            c.execute(
+                "INSERT INTO reflections (ts, score, threshold, accepted) VALUES (?,?,?,?)",
+                (datetime.now().isoformat(timespec="seconds"), score, threshold, int(accepted)),
+            )
+    except Exception as e:
+        log.warning("tracing.record_reflection: %s", e)
+    finally:
+        c.close()
+
+
+def reflection_stats(days: int = 7) -> dict:
+    """Taxa de reescrita — quantas vezes o critic reprovou a 1ª resposta."""
+    c = _conn()
+    try:
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        rows = c.execute(
+            "SELECT score, accepted FROM reflections WHERE ts > ?", (cutoff,)
+        ).fetchall()
+        total = len(rows)
+        if total == 0:
+            return {"total": 0, "rewrites": 0, "rewrite_rate": 0.0, "avg_score": 0.0}
+        rewrites = sum(1 for _, accepted in rows if not accepted)
+        avg_score = sum(score for score, _ in rows) / total
+        return {
+            "total":        total,
+            "rewrites":     rewrites,
+            "rewrite_rate": round(rewrites / total * 100, 1),
+            "avg_score":    round(avg_score, 2),
+        }
+    except Exception:
+        return {"total": 0, "rewrites": 0, "rewrite_rate": 0.0, "avg_score": 0.0}
     finally:
         c.close()
 
@@ -115,18 +166,24 @@ def stats(days: int = 1) -> list[dict]:
 
 
 def prune(max_age_days: int = 30) -> dict:
-    """Remove spans mais velhos que max_age_days — sem isso llm_spans cresce pra
-    sempre (1 linha por chamada LLM). Manual/sob-demanda, mesmo padrão de
-    audit.prune/knowledge_graph.consolidate."""
+    """Remove spans/reflections mais velhos que max_age_days — sem isso as
+    tabelas crescem pra sempre (1 linha por chamada LLM / avaliação).
+    Manual/sob-demanda, mesmo padrão de audit.prune/knowledge_graph.consolidate."""
     cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
     c = _conn()
     try:
-        before = c.execute("SELECT COUNT(*) FROM llm_spans").fetchone()[0]
+        before_spans = c.execute("SELECT COUNT(*) FROM llm_spans").fetchone()[0]
+        before_refl  = c.execute("SELECT COUNT(*) FROM reflections").fetchone()[0]
         c.execute("DELETE FROM llm_spans WHERE ts < ?", (cutoff,))
+        c.execute("DELETE FROM reflections WHERE ts < ?", (cutoff,))
         c.commit()
         c.execute("VACUUM")
-        after = c.execute("SELECT COUNT(*) FROM llm_spans").fetchone()[0]
-        return {"removed": before - after, "remaining": after}
+        after_spans = c.execute("SELECT COUNT(*) FROM llm_spans").fetchone()[0]
+        after_refl  = c.execute("SELECT COUNT(*) FROM reflections").fetchone()[0]
+        return {
+            "removed":   (before_spans - after_spans) + (before_refl - after_refl),
+            "remaining": after_spans + after_refl,
+        }
     except Exception as e:
         log.warning("tracing.prune: %s", e)
         return {"removed": 0, "remaining": 0, "error": str(e)}

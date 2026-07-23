@@ -206,6 +206,7 @@ async def get_metrics():
         },
         "tools":           _tool_stats(days=7),
         "llm_calls":       _tracing.stats(days=1),
+        "reflection":      _tracing.reflection_stats(days=7),
         "circuit_breaker": _circuit_breaker.status(),
         "knowledge_graph": kg_stats,
         "vram":            vram,
@@ -493,6 +494,12 @@ async def trace_llm_recent(limit: int = 50):
 async def trace_llm_prune(max_age_days: int = 30):
     import tracing
     return tracing.prune(max_age_days=max_age_days)
+
+
+@app.get("/trace/reflection/stats")
+async def trace_reflection_stats(days: int = 7):
+    import tracing
+    return tracing.reflection_stats(days=days)
 
 
 @app.get("/circuit-breaker/status")
