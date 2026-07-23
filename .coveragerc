@@ -1,0 +1,12 @@
+[run]
+source = .
+omit =
+    tests/*
+    .venv/*
+    venv/*
+    workspace/*
+    sandbox_wasm/*
+    */__pycache__/*
+
+[report]
+skip_empty = True

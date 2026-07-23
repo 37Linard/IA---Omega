@@ -29,25 +29,30 @@ def _conn() -> sqlite3.Connection:
 
 
 def log_action(tool: str, input_data, output: str, duration: float = 0.0, ip: str = ""):
+    # "with conn:" só faz commit/rollback (semântica do sqlite3), NÃO fecha a
+    # conexão — sem close() explícito, cada chamada vaza um fd até o GC passar.
+    c = _conn()
     try:
         inp = json.dumps(input_data, ensure_ascii=False) if not isinstance(input_data, str) else input_data
-        with _conn() as c:
+        with c:
             c.execute(
                 "INSERT INTO audit_log (ts, tool, input, output, duration, ip) VALUES (?,?,?,?,?,?)",
                 (datetime.now().isoformat(timespec="seconds"), tool, inp[:500], output[:500], round(duration, 3), ip)
             )
     except Exception as e:
         log.warning("audit.log_action: %s", e)
+    finally:
+        c.close()
 
 
 def tool_stats(days: int = 7) -> list[dict]:
     """Retorna taxa de sucesso por ferramenta nos últimos N dias."""
+    c = _conn()
     try:
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
-        with _conn() as c:
-            rows = c.execute(
-                "SELECT tool, output, duration FROM audit_log WHERE ts > ?", (cutoff,)
-            ).fetchall()
+        rows = c.execute(
+            "SELECT tool, output, duration FROM audit_log WHERE ts > ?", (cutoff,)
+        ).fetchall()
         stats: dict[str, dict] = {}
         for tool, output, duration in rows:
             if tool not in stats:
@@ -68,6 +73,8 @@ def tool_stats(days: int = 7) -> list[dict]:
         return sorted(result, key=lambda x: x["calls"], reverse=True)
     except Exception:
         return []
+    finally:
+        c.close()
 
 
 def prune(max_age_days: int = 30) -> dict:
@@ -76,33 +83,36 @@ def prune(max_age_days: int = 30) -> dict:
     automático: scheduler.py só roda agent.run(task), não é o lugar certo pra
     manutenção interna."""
     cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
+    c = _conn()
     try:
-        c = _conn()
         before = c.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
         c.execute("DELETE FROM audit_log WHERE ts < ?", (cutoff,))
         c.commit()
         c.execute("VACUUM")
         after = c.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
-        c.close()
         return {"removed": before - after, "remaining": after}
     except Exception as e:
         log.warning("audit.prune: %s", e)
         return {"removed": 0, "remaining": 0, "error": str(e)}
+    finally:
+        c.close()
 
 
 def query(limit: int = 100, tool_filter: str = "") -> list[dict]:
+    c = _conn()
     try:
-        with _conn() as c:
-            if tool_filter:
-                rows = c.execute(
-                    "SELECT ts,tool,input,output,duration,ip FROM audit_log WHERE tool=? ORDER BY id DESC LIMIT ?",
-                    (tool_filter, limit)
-                ).fetchall()
-            else:
-                rows = c.execute(
-                    "SELECT ts,tool,input,output,duration,ip FROM audit_log ORDER BY id DESC LIMIT ?",
-                    (limit,)
-                ).fetchall()
+        if tool_filter:
+            rows = c.execute(
+                "SELECT ts,tool,input,output,duration,ip FROM audit_log WHERE tool=? ORDER BY id DESC LIMIT ?",
+                (tool_filter, limit)
+            ).fetchall()
+        else:
+            rows = c.execute(
+                "SELECT ts,tool,input,output,duration,ip FROM audit_log ORDER BY id DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
         return [{"ts": r[0], "tool": r[1], "input": r[2], "output": r[3], "duration": r[4], "ip": r[5]} for r in rows]
     except Exception:
         return []
+    finally:
+        c.close()

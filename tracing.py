@@ -52,8 +52,11 @@ def record_span(
     success: bool = True, error: str = "", fallback_used: bool = False,
     prompt_preview: str = "",
 ):
+    # "with conn:" só faz commit/rollback (semântica do sqlite3), NÃO fecha a
+    # conexão — sem close() explícito, cada chamada vaza um fd até o GC passar.
+    c = _conn()
     try:
-        with _conn() as c:
+        with c:
             c.execute(
                 "INSERT INTO llm_spans (ts, kind, model, duration_ms, prompt_tokens, "
                 "completion_tokens, tps, success, error, fallback_used, prompt_preview) "
@@ -66,17 +69,19 @@ def record_span(
             )
     except Exception as e:
         log.warning("tracing.record_span: %s", e)
+    finally:
+        c.close()
 
 
 def stats(days: int = 1) -> list[dict]:
     """Latência/tokens/erro agregados por modelo, últimos N dias."""
+    c = _conn()
     try:
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
-        with _conn() as c:
-            rows = c.execute(
-                "SELECT model, duration_ms, success, tps, fallback_used FROM llm_spans WHERE ts > ?",
-                (cutoff,),
-            ).fetchall()
+        rows = c.execute(
+            "SELECT model, duration_ms, success, tps, fallback_used FROM llm_spans WHERE ts > ?",
+            (cutoff,),
+        ).fetchall()
 
         agg: dict[str, dict] = {}
         for model, duration_ms, success, tps, fallback_used in rows:
@@ -105,6 +110,8 @@ def stats(days: int = 1) -> list[dict]:
         return sorted(result, key=lambda x: x["calls"], reverse=True)
     except Exception:
         return []
+    finally:
+        c.close()
 
 
 def prune(max_age_days: int = 30) -> dict:
@@ -112,31 +119,34 @@ def prune(max_age_days: int = 30) -> dict:
     sempre (1 linha por chamada LLM). Manual/sob-demanda, mesmo padrão de
     audit.prune/knowledge_graph.consolidate."""
     cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
+    c = _conn()
     try:
-        c = _conn()
         before = c.execute("SELECT COUNT(*) FROM llm_spans").fetchone()[0]
         c.execute("DELETE FROM llm_spans WHERE ts < ?", (cutoff,))
         c.commit()
         c.execute("VACUUM")
         after = c.execute("SELECT COUNT(*) FROM llm_spans").fetchone()[0]
-        c.close()
         return {"removed": before - after, "remaining": after}
     except Exception as e:
         log.warning("tracing.prune: %s", e)
         return {"removed": 0, "remaining": 0, "error": str(e)}
+    finally:
+        c.close()
 
 
 def recent(limit: int = 50) -> list[dict]:
+    c = _conn()
     try:
-        with _conn() as c:
-            rows = c.execute(
-                "SELECT ts, kind, model, duration_ms, prompt_tokens, completion_tokens, "
-                "tps, success, error, fallback_used, prompt_preview FROM llm_spans "
-                "ORDER BY id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+        rows = c.execute(
+            "SELECT ts, kind, model, duration_ms, prompt_tokens, completion_tokens, "
+            "tps, success, error, fallback_used, prompt_preview FROM llm_spans "
+            "ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
         cols = ["ts", "kind", "model", "duration_ms", "prompt_tokens", "completion_tokens",
                 "tps", "success", "error", "fallback_used", "prompt_preview"]
         return [dict(zip(cols, r)) for r in rows]
     except Exception:
         return []
+    finally:
+        c.close()
