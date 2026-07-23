@@ -51,7 +51,7 @@ def test_half_open_after_cooldown(monkeypatch):
     assert cb.is_open("t1")[0] is True
 
     # simula cooldown expirado voltando o relogio pro passado
-    cb._state["t1"]["opened_at"] -= (cb.COOLDOWN_SECONDS + 1)
+    cb._state["t1"]["opened_at"] -= (cb._cooldown_for("t1") + 1)
 
     open_, remaining = cb.is_open("t1")
     assert open_ is False
@@ -69,6 +69,44 @@ def test_status_reports_open_tools():
     assert rows["quebrada"]["failures"] == 3
     assert rows["saudavel"]["open"] is False
     assert rows["saudavel"]["failures"] == 0
+
+
+def test_credential_tool_uses_longer_cooldown_than_default():
+    # google_drive falha geralmente é credencial faltando — cooldown longo, não
+    # faz sentido testar de novo em 5min só pra falhar igual. Achado 2026-07-23.
+    assert cb._cooldown_for("google_drive") > cb.CIRCUIT_BREAKER_DEFAULT_COOLDOWN
+    assert cb._cooldown_for("notion") > cb.CIRCUIT_BREAKER_DEFAULT_COOLDOWN
+
+
+def test_transient_network_tool_uses_shorter_cooldown_than_default():
+    assert cb._cooldown_for("web_search") < cb.CIRCUIT_BREAKER_DEFAULT_COOLDOWN
+    assert cb._cooldown_for("get_currency") < cb.CIRCUIT_BREAKER_DEFAULT_COOLDOWN
+
+
+def test_unlisted_tool_uses_default_cooldown():
+    assert cb._cooldown_for("tool_qualquer_sem_override") == cb.CIRCUIT_BREAKER_DEFAULT_COOLDOWN
+
+
+def test_status_reports_per_tool_cooldown_remaining(monkeypatch):
+    monkeypatch.setitem(cb.CIRCUIT_BREAKER_COOLDOWNS, "web_search", 10)
+    for _ in range(3):
+        cb.record_result("web_search", success=False)
+
+    rows = {r["tool"]: r for r in cb.status()}
+
+    assert rows["web_search"]["open"] is True
+    assert rows["web_search"]["cooldown_remaining_s"] <= 10
+
+
+def test_half_open_respects_shorter_tool_specific_cooldown(monkeypatch):
+    monkeypatch.setitem(cb.CIRCUIT_BREAKER_COOLDOWNS, "web_search", 10)
+    for _ in range(3):
+        cb.record_result("web_search", success=False)
+    assert cb.is_open("web_search")[0] is True
+
+    cb._state["web_search"]["opened_at"] -= 11  # passou do cooldown curto de 10s
+
+    assert cb.is_open("web_search")[0] is False
 
 
 def test_reset_specific_tool_only():
