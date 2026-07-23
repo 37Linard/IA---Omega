@@ -1,35 +1,38 @@
-requests
-ddgs
-fastapi
-uvicorn[standard]
-beautifulsoup4
-python-multipart
-lancedb
-fastembed
-pypdf
-watchdog
-pyjwt
-faster-whisper
-pyttsx3
-pyautogui
-Pillow
-pyperclip
-playwright
-redis
-networkx
-wasmtime
+requests==2.34.2
+ddgs==9.14.4
+fastapi==0.138.0
+uvicorn[standard]==0.49.0
+beautifulsoup4==4.15.0
+python-multipart==0.0.32
+lancedb==0.33.0
+fastembed==0.8.0
+pypdf==6.14.2
+watchdog==6.0.0
+pyjwt==2.13.0
+faster-whisper==1.2.1
+pyttsx3==2.99
+pyautogui==0.9.54
+Pillow==12.2.0
+pyperclip==1.11.0
+playwright==1.61.0
+redis==8.0.1
+networkx==3.6.1
+wasmtime==46.0.1
 
 # generate_image_tool (Stable Diffusion local) — opcional, downloads grandes
 # Windows + GPU: instale torch com CUDA ANTES deste arquivo, ex.:
 #   pip install torch --index-url https://download.pytorch.org/whl/cu126
 # (verificar index com wheel pra sua versao de Python — cu121/cu124 nao tem py3.14+)
 # senão cai pra CPU automaticamente.
+# NÃO pinado de propósito — versão com build tag (ex. 2.12.1+cu126) só existe no
+# index especial do PyTorch, pinar quebraria "pip install -r" em máquina sem CUDA
+# pré-instalado. Versão validada nesta máquina: torch==2.12.1+cu126.
 torch
-diffusers
-accelerate
+diffusers==0.38.0
+accelerate==1.14.0
 
 # generate_chart_tool
-matplotlib
+matplotlib==3.11.0
 
 # testes (dev) — rodar com: pytest
-pytest
+pytest==9.1.1
