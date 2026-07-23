@@ -75,14 +75,20 @@ def test_nightly_eval_runs_as_subprocess_not_inprocess(monkeypatch):
     # (memory.MEMORY_FILE, audit.AUDIT_DB, tracing.TRACE_DB) — rodar in-process
     # corromperia estado real de usuário de verdade conversando ao mesmo tempo.
     captured = {}
-    def fake_run(cmd, cwd=None, capture_output=None, text=None, timeout=None):
+    def fake_run(cmd, **kw):
         captured["cmd"] = cmd
+        captured["kw"] = kw
         return _fake_completed(0, "==== 5/5 passou ====")
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     _run_nightly_eval()
 
     assert "eval_harness.py" in captured["cmd"]
+    # achado real ao vivo 2026-07-23: sem encoding="utf-8" explícito, Windows
+    # decodifica a saída como cp1252 e quebra com UnicodeDecodeError em
+    # acento/emoji (eval_harness.py imprime em utf-8).
+    assert captured["kw"]["encoding"] == "utf-8"
+    assert captured["kw"]["errors"] == "replace"
 
 
 def test_nightly_eval_notifies_discord_on_failure(monkeypatch):
