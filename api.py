@@ -114,6 +114,11 @@ async def get_audit(limit: int = 100, tool: str = "", _rl=Depends(_check_rate_li
     return {"entries": _audit.query(limit=min(limit, 500), tool_filter=tool)}
 
 
+@app.post("/audit/prune")
+async def prune_audit(max_age_days: int = 30):
+    return _audit.prune(max_age_days=max_age_days)
+
+
 @app.get("/analyze")
 async def analyze_errors(_rl=Depends(_check_rate_limit)):
     import os, json as _json
@@ -477,6 +482,12 @@ async def trace_llm_stats(days: int = 1):
 async def trace_llm_recent(limit: int = 50):
     import tracing
     return tracing.recent(limit=min(limit, 200))
+
+
+@app.post("/trace/llm/prune")
+async def trace_llm_prune(max_age_days: int = 30):
+    import tracing
+    return tracing.prune(max_age_days=max_age_days)
 
 
 @app.get("/circuit-breaker/status")
