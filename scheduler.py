@@ -89,6 +89,12 @@ def _run_nightly_eval():
         result = subprocess.run(
             [sys.executable, "eval_harness.py"],
             cwd=project_dir, capture_output=True, text=True, timeout=900,
+            encoding="utf-8", errors="replace",
+            # sem isso, Windows decodifica a saída como cp1252 (codepage do
+            # console) — eval_harness.py imprime acento/emoji em utf-8, e a
+            # thread interna do subprocess (_readerthread) quebra com
+            # UnicodeDecodeError. Achado ao vivo 2026-07-23: rodou por sorte
+            # (retorno ainda veio certo), mas é frágil — pode perder stdout.
         )
         passed = result.returncode == 0
         tail = (result.stdout or "")[-2000:]
