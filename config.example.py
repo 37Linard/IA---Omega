@@ -97,6 +97,13 @@ SCHEDULED_TASKS = [
     # {"label": "Notícias", "task": "pesquise notícias de tech hoje", "hour": 8, "minute": 0},
 ]
 
+# ── Eval noturno ─────────────────────────────────────────────────────────
+# Roda eval_harness.py (golden tasks contra Ollama real) 1x por noite via
+# subprocesso — nunca in-process, corromperia audit/tracing/memory reais.
+NIGHTLY_EVAL_ENABLED = True
+NIGHTLY_EVAL_HOUR     = 3
+NIGHTLY_EVAL_MINUTE   = 0
+
 # ── Email (opcional) ──────────────────────────────────────────────────────
 SMTP_HOST      = ""   # ex: smtp.gmail.com
 SMTP_PORT      = 587
