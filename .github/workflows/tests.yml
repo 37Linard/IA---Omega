@@ -25,3 +25,8 @@ jobs:
 
       - name: Roda testes
         run: pytest
+        env:
+          # pyautogui checa DISPLAY no import (Linux/X11) mesmo com o
+          # screenshot() mockado no teste — sem isso quebra com KeyError antes
+          # do mock entrar em ação. Fake value basta, screenshot real nunca roda.
+          DISPLAY: ":99"
