@@ -13,7 +13,7 @@ import voice
 
 import logging
 import threading
-from config import OLLAMA_MODEL, OLLAMA_URL, TASK_TIMEOUT, AUTH_PASSWORD, JWT_SECRET, SCHEDULED_TASKS, RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW
+from config import OLLAMA_MODEL, OLLAMA_URL, TASK_TIMEOUT, AUTH_PASSWORD, JWT_SECRET, SCHEDULED_TASKS, RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW, NIGHTLY_EVAL_ENABLED, NIGHTLY_EVAL_HOUR, NIGHTLY_EVAL_MINUTE
 from health_checks import jwt_secret_warning
 import auth as _auth
 import scheduler as _scheduler
@@ -92,6 +92,8 @@ def create_agent(session_id: str = "") -> OrchestratorAgent:
 
 _scheduler.start(create_agent, SCHEDULED_TASKS)
 _watcher.start()
+if NIGHTLY_EVAL_ENABLED:
+    _scheduler.start_nightly_eval(NIGHTLY_EVAL_HOUR, NIGHTLY_EVAL_MINUTE)
 
 
 @app.post("/login")
