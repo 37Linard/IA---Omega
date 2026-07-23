@@ -172,3 +172,18 @@ HITL_GATE_TIERS    = ["destructive"]  # quais tiers disparam HITL quando HITL_EN
 # keyboard/mouse não têm whitelist possível (controle bruto de tecla/clique) —
 # única defesa real é aprovação humana, trava sempre mesmo com HITL_ENABLED=False.
 ALWAYS_HITL_TOOLS  = {"keyboard", "mouse"}
+
+# ── Circuit breaker — cooldown por tool (opcional) ──────────────────────────
+# Não listada aqui usa CIRCUIT_BREAKER_DEFAULT_COOLDOWN.
+CIRCUIT_BREAKER_DEFAULT_COOLDOWN = 300  # 5min
+CIRCUIT_BREAKER_COOLDOWNS: dict = {
+    "google_drive":    1800,  # 30min — geralmente é credencial faltando/expirada
+    "notion":          1800,
+    "slack":           1800,
+    "discord_notify":  1800,
+    "send_email":      1800,
+    "web_search":      90,    # rede transiente — vale tentar de novo logo
+    "fetch_page":      90,
+    "get_currency":    90,
+    "get_crypto":      90,
+}

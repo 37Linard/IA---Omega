@@ -14,13 +14,22 @@ import logging
 import threading
 import time
 
+from config import CIRCUIT_BREAKER_DEFAULT_COOLDOWN, CIRCUIT_BREAKER_COOLDOWNS
+
 log = logging.getLogger(__name__)
 
 FAILURE_THRESHOLD = 3     # falhas seguidas pra abrir o circuito
-COOLDOWN_SECONDS  = 300   # tempo aberto antes de deixar passar 1 tentativa real (half-open)
 
 _lock: threading.Lock = threading.Lock()
 _state: dict[str, dict] = {}   # tool -> {"failures": int, "opened_at": float|None}
+
+
+def _cooldown_for(tool: str) -> int:
+    """Tool com credencial faltando (Drive, Notion...) só volta a funcionar
+    quando um humano configurar — cooldown longo. Tool de rede transiente
+    (busca, cotação) tende a resolver sozinha — cooldown curto. Achado
+    2026-07-23: 300s fixo pra tudo desperdiçava tempo nos dois extremos."""
+    return CIRCUIT_BREAKER_COOLDOWNS.get(tool, CIRCUIT_BREAKER_DEFAULT_COOLDOWN)
 
 
 def _get(tool: str) -> dict:
@@ -28,16 +37,17 @@ def _get(tool: str) -> dict:
 
 
 def is_open(tool: str) -> tuple[bool, float]:
-    """Retorna (aberto, segundos_restantes). Após COOLDOWN, volta False
-    (half-open) — deixa uma tentativa real passar pra ver se já resolveu."""
+    """Retorna (aberto, segundos_restantes). Após o cooldown da tool, volta
+    False (half-open) — deixa uma tentativa real passar pra ver se já resolveu."""
     with _lock:
         s = _get(tool)
         if s["opened_at"] is None:
             return False, 0.0
+        cooldown = _cooldown_for(tool)
         elapsed = time.monotonic() - s["opened_at"]
-        if elapsed >= COOLDOWN_SECONDS:
+        if elapsed >= cooldown:
             return False, 0.0
-        return True, round(COOLDOWN_SECONDS - elapsed, 1)
+        return True, round(cooldown - elapsed, 1)
 
 
 def record_result(tool: str, success: bool):
@@ -68,11 +78,12 @@ def status() -> list[dict]:
         out = []
         for tool, s in _state.items():
             opened = s["opened_at"]
-            open_now = opened is not None and (now - opened) < COOLDOWN_SECONDS
+            cooldown = _cooldown_for(tool)
+            open_now = opened is not None and (now - opened) < cooldown
             out.append({
                 "tool": tool,
                 "failures": s["failures"],
                 "open": open_now,
-                "cooldown_remaining_s": round(COOLDOWN_SECONDS - (now - opened), 1) if open_now else 0.0,
+                "cooldown_remaining_s": round(cooldown - (now - opened), 1) if open_now else 0.0,
             })
         return sorted(out, key=lambda x: (-x["open"], -x["failures"]))
