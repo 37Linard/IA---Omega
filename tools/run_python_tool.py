@@ -311,6 +311,18 @@ class RunPythonTool:
         if _wasm_available():
             try:
                 output, exit_code, elapsed = _run_in_wasm(code)
+                # WASM só tem stdlib (CPython/WASI puro, sem numpy/pandas/etc) — código
+                # que precisa de lib terceira "sucede" tecnicamente (exit_code!=0 normal,
+                # não é falha de sandbox) mas nunca chegava no Docker, que tem as libs.
+                # Achado 2026-07-23: imagem Docker era efetivamente inalcançável.
+                if exit_code != 0 and "ModuleNotFoundError" in output and _docker_running():
+                    image = SANDBOX_IMAGE if _image_exists(SANDBOX_IMAGE) else FALLBACK_IMAGE
+                    try:
+                        d_output, d_exit, d_elapsed = _run_in_docker(code, image)
+                        header = f"[sandbox: {image} (retry pos-WASM sem lib) | {d_elapsed}s | exit={d_exit}]"
+                        return f"{header}\n{d_output}"
+                    except Exception:
+                        pass  # Docker tambem falhou — cai pro resultado original do WASM
                 header = f"[sandbox: wasm | {elapsed}s | exit={exit_code}]"
                 return f"{header}\n{output}"
             except Exception as e:
