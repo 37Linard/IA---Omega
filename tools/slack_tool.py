@@ -41,7 +41,12 @@ class SlackTool:
                 "- SLACK_BOT_TOKEN: api.slack.com/apps → OAuth tokens"
             )
 
-        return f"Ação desconhecida: '{action}'. Use 'send'."
+        if action == "list_channels":
+            if not bot_token:
+                return "Erro: 'list_channels' precisa de SLACK_BOT_TOKEN — webhook não lista canais."
+            return self._list_channels(bot_token)
+
+        return f"Ação desconhecida: '{action}'. Use 'send' ou 'list_channels'."
 
     def _send_webhook(self, url: str, message: str, input_data: dict) -> str:
         try:
@@ -76,3 +81,27 @@ class SlackTool:
         if data.get("ok"):
             return f"Mensagem enviada no canal {channel} do Slack."
         return f"Erro Slack: {data.get('error', 'desconhecido')}"
+
+    def _list_channels(self, token: str) -> str:
+        try:
+            import requests
+        except ImportError:
+            return "Erro: requests não instalado."
+
+        r = requests.get(
+            "https://slack.com/api/conversations.list",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"limit": 100},
+            timeout=10,
+        )
+        data = r.json()
+        if not data.get("ok"):
+            return f"Erro Slack: {data.get('error', 'desconhecido')}"
+        channels = data.get("channels", [])
+        if not channels:
+            return "Nenhum canal encontrado (ou o bot não foi adicionado a nenhum)."
+        lines = [f"Canais ({len(channels)}):"]
+        for ch in channels:
+            tipo = "privado" if ch.get("is_private") else "público"
+            lines.append(f"- #{ch.get('name', '?')} ({tipo})")
+        return "\n".join(lines)
