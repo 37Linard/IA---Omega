@@ -66,7 +66,8 @@ def test_stats_aggregates_per_model(tmp_path, monkeypatch):
 def test_stats_excludes_old_spans_outside_window(tmp_path, monkeypatch):
     monkeypatch.setattr(tracing_mod, "TRACE_DB", str(tmp_path / "traces.db"))
     from datetime import datetime, timedelta
-    with tracing_mod._conn() as c:
+    c = tracing_mod._conn()
+    with c:
         c.execute(
             "INSERT INTO llm_spans (ts, kind, model, duration_ms, prompt_tokens, "
             "completion_tokens, tps, success, error, fallback_used, prompt_preview) "
@@ -74,6 +75,7 @@ def test_stats_excludes_old_spans_outside_window(tmp_path, monkeypatch):
             ((datetime.now() - timedelta(days=30)).isoformat(), "generate", "old-model",
              10.0, 0, 0, 0.0, 1, "", 0, ""),
         )
+    c.close()
 
     result = tracing_mod.stats(days=1)
 
@@ -124,7 +126,8 @@ def test_generate_records_span_with_fallback_flag(tmp_path, monkeypatch):
 def test_prune_removes_only_spans_older_than_cutoff(tmp_path, monkeypatch):
     monkeypatch.setattr(tracing_mod, "TRACE_DB", str(tmp_path / "traces.db"))
     from datetime import datetime, timedelta
-    with tracing_mod._conn() as c:
+    c = tracing_mod._conn()
+    with c:
         c.execute(
             "INSERT INTO llm_spans (ts, kind, model, duration_ms, prompt_tokens, "
             "completion_tokens, tps, success, error, fallback_used, prompt_preview) "
@@ -132,6 +135,7 @@ def test_prune_removes_only_spans_older_than_cutoff(tmp_path, monkeypatch):
             ((datetime.now() - timedelta(days=60)).isoformat(), "generate", "old",
              10.0, 0, 0, 0.0, 1, "", 0, ""),
         )
+    c.close()
     tracing_mod.record_span(kind="generate", model="new", duration_ms=10.0, success=True)
 
     result = tracing_mod.prune(max_age_days=30)

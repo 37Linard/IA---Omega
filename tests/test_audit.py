@@ -15,11 +15,13 @@ def test_log_action_and_query_roundtrip(tmp_path, monkeypatch):
 def test_prune_removes_only_entries_older_than_cutoff(tmp_path, monkeypatch):
     monkeypatch.setattr(audit_mod, "AUDIT_DB", str(tmp_path / "audit.db"))
     from datetime import datetime, timedelta
-    with audit_mod._conn() as c:
+    c = audit_mod._conn()
+    with c:
         c.execute(
             "INSERT INTO audit_log (ts, tool, input, output, duration, ip) VALUES (?,?,?,?,?,?)",
             ((datetime.now() - timedelta(days=60)).isoformat(), "old_tool", "{}", "ok", 0.1, ""),
         )
+    c.close()
     audit_mod.log_action("new_tool", {}, "ok")
 
     result = audit_mod.prune(max_age_days=30)
