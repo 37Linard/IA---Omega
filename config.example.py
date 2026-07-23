@@ -37,6 +37,7 @@ NUM_PREDICT       = 400    # max tokens por step (400 = rápido, 800 = mais deta
 NUM_CTX           = 3072   # context window (3072 = padrão, 4096 = mais contexto)
 NUM_GPU           = -1     # -1 = usa todas as camadas GPU disponíveis
 TEMPERATURE       = 0.1    # 0.0 = determinístico, 1.0 = criativo
+KEEP_ALIVE        = "30m"  # Ollama descarrega modelo após 5min ocioso por padrão — evita recarregar 7B a cada pausa
 
 TOOL_TIMEOUT      = 30     # segundos máximos por ferramenta (padrão)
 TOOL_TIMEOUTS: dict = {    # overrides por ferramenta — usa TOOL_TIMEOUT se não listada aqui
@@ -102,6 +103,9 @@ IMAGE_GEN_DEVICE         = "auto"   # "auto" | "cuda" | "cpu"
 IMAGE_GEN_STEPS          = 2
 IMAGE_GEN_SIZE           = 512
 IMAGE_GEN_GUIDANCE_SCALE = 0.0
+IMAGE_GEN_UNLOAD_OLLAMA  = True     # descarrega Ollama da VRAM antes de gerar na GPU (GPUs pequenas
+                                     # não cabem os dois juntos). Ollama recarrega sozinho no próximo
+                                     # request normal (KEEP_ALIVE), só adiciona latência nesse 1º request.
 
 # -- Plugin marketplace (opcional, desligado por padrao) --------------------
 # Ver plugin_manager.py pro modelo de seguranca antes de habilitar.

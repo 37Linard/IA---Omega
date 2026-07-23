@@ -28,6 +28,27 @@ MAX_RETRIES = 3
 RETRY_DELAY = 5  # segundos — dá tempo pro Ollama carregar o modelo
 
 
+def unload_all_models():
+    """Descarrega da VRAM todo modelo Ollama atualmente carregado (keep_alive=0).
+    Usado antes de generate_image na GPU — RTX 2060 6GB não cabe Ollama + Stable
+    Diffusion ao mesmo tempo (medido: ~156MB livres de 6GB, thrashing). O próximo
+    request normal recarrega sozinho (KEEP_ALIVE), só adiciona latência na 1ª
+    chamada depois da imagem."""
+    try:
+        r = requests.get(f"{OLLAMA_URL}/api/ps", timeout=5)
+        loaded = [m["name"] for m in r.json().get("models", [])]
+    except Exception as e:
+        log.warning("Não consegui listar modelos carregados no Ollama (%s) — pulando unload", e)
+        return
+    for name in loaded:
+        try:
+            requests.post(f"{OLLAMA_URL}/api/generate",
+                          json={"model": name, "prompt": "", "keep_alive": 0}, timeout=10)
+            log.info("Ollama: descarregado %s da VRAM (liberando espaço pra generate_image)", name)
+        except Exception as e:
+            log.warning("Falha ao descarregar %s do Ollama (%s)", name, e)
+
+
 class OllamaLLM:
     def __init__(self, model: str = "qwen2.5:7b", fallback_model: str = None):
         self.model          = model
