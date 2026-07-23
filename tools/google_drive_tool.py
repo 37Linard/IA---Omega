@@ -60,11 +60,18 @@ def _docs():
     return build("docs", "v1", credentials=_get_creds())
 
 
+def _escape_drive_query_value(value: str) -> str:
+    """Escapa \\ e ' conforme a sintaxe de query da Drive API — sem isso, query com
+    aspas simples injeta cláusula extra na busca (achado 2026-07-23: 'x' or
+    fullText contains 'y' burlava o filtro mimeType/trashed pretendido)."""
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
 def _list_files(query: str = "", limit: int = 20) -> str:
     svc = _drive()
     q_parts = ["mimeType='application/vnd.google-apps.document'", "trashed=false"]
     if query:
-        q_parts.append(f"name contains '{query}'")
+        q_parts.append(f"name contains '{_escape_drive_query_value(query)}'")
     results = svc.files().list(
         q=" and ".join(q_parts),
         pageSize=min(limit, 50),
