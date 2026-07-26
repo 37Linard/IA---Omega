@@ -24,7 +24,7 @@ from tools import _schema as tool_schema
 
 ERROR_LOG = os.path.join(os.path.dirname(__file__), "workspace", "error_log.json")
 
-# Human-in-the-Loop registry — hitl_id â†’ {"event": Event, "approved": bool|None}
+# Human-in-the-Loop registry — hitl_id → {"event": Event, "approved": bool|None}
 _HITL_REGISTRY: dict = {}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -104,43 +104,43 @@ Thought: Preciso buscar o preço do dólar.
 Action: get_currency
 Action Input: {{"currency": "BRL"}}
 
-MAPEAMENTO DE TAREFAS â†’ FERRAMENTAS:
-- bitcoin/ethereum/cripto/BTC/ETH/preço de crypto/RSI â†’ get_crypto com {{"symbol": "bitcoin"}}
-- cotação/dólar/euro/libra/moeda fiat/câmbio (NÃO cripto) â†’ get_currency
-- pesquisa/notícia/informação geral â†’ web_search
-- acessar URL / extrair conteúdo de página â†’ fetch_page
-- salvar nota no Obsidian â†’ save_note
-- ler arquivo de texto â†’ read_file
-- criar/salvar arquivo â†’ write_file
-- listar pasta â†’ list_directory
-- chamar API â†’ http_request
-- calcular/executar código Python â†’ run_python
-- banco de dados/SQL/tabela/query/sqlite â†’ run_sql
-- memorizar/lembrar/guardar fato/preferência â†’ remember_fact
-- tirar/capturar screenshot/print da tela â†’ screenshot
-- digitar texto/pressionar teclas â†’ keyboard
-- mover/clicar mouse â†’ mouse
-- clipboard/copiar/colar â†’ clipboard
-- git status/log/diff/commit â†’ git
-- executar comando no terminal/shell â†’ terminal
-- abrir/navegar no browser/Chrome â†’ browser
-- enviar email â†’ send_email
-- analisar imagem/foto/PNG/JPG â†’ analyze_image
-- ler planilha CSV/Excel â†’ read_spreadsheet
-- gerar gráfico/chart/visualização â†’ generate_chart
+MAPEAMENTO DE TAREFAS → FERRAMENTAS:
+- bitcoin/ethereum/cripto/BTC/ETH/preço de crypto/RSI → get_crypto com {{"symbol": "bitcoin"}}
+- cotação/dólar/euro/libra/moeda fiat/câmbio (NÃO cripto) → get_currency
+- pesquisa/notícia/informação geral → web_search
+- acessar URL / extrair conteúdo de página → fetch_page
+- salvar nota no Obsidian → save_note
+- ler arquivo de texto → read_file
+- criar/salvar arquivo → write_file
+- listar pasta → list_directory
+- chamar API → http_request
+- calcular/executar código Python → run_python
+- banco de dados/SQL/tabela/query/sqlite → run_sql
+- memorizar/lembrar/guardar fato/preferência → remember_fact
+- tirar/capturar screenshot/print da tela → screenshot
+- digitar texto/pressionar teclas → keyboard
+- mover/clicar mouse → mouse
+- clipboard/copiar/colar → clipboard
+- git status/log/diff/commit → git
+- executar comando no terminal/shell → terminal
+- abrir/navegar no browser/Chrome → browser
+- enviar email → send_email
+- analisar imagem/foto/PNG/JPG → analyze_image
+- ler planilha CSV/Excel → read_spreadsheet
+- gerar gráfico/chart/visualização → generate_chart
 - gerar/criar imagem, desenho, ilustração a partir de descrição → generate_image
-- buscar em PDF/documento indexado â†’ rag_search
-- criar nota no Notion â†’ notion
-- enviar mensagem no Slack â†’ slack
-- ler/criar/editar Google Docs/Drive â†’ google_drive
-- preço/cotação/análise/RSI/indicadores de cripto/bitcoin/ethereum â†’ get_crypto com {{"symbol": "bitcoin"}} ou {{"symbol": "btc"}}
-- criar relatório estruturado/análise formal/documento de análise â†’ generate_report
+- buscar em PDF/documento indexado → rag_search
+- criar nota no Notion → notion
+- enviar mensagem no Slack → slack
+- ler/criar/editar Google Docs/Drive → google_drive
+- preço/cotação/análise/RSI/indicadores de cripto/bitcoin/ethereum → get_crypto com {{"symbol": "bitcoin"}} ou {{"symbol": "btc"}}
+- criar relatório estruturado/análise formal/documento de análise → generate_report
 
 PESQUISA E ANÁLISE AVANÇADA:
 - Para crypto/finanças: use get_crypto (dados técnicos) + web_search (notícias/contexto) juntos — nunca só uma fonte
 - Para pesquisas importantes: consulte 2+ fontes e compare antes de concluir
 - Após tarefas de monitoramento/análise recorrente, ofereça: "Deseja que eu execute isso automaticamente todo dia? Posso enviar alerta via Slack ou email se o preço cair X%."
-- Adapte profundidade ao perfil do usuário: iniciante â†’ linguagem simples sem siglas; especialista â†’ inclua RSI, MA, volatilidade, etc.
+- Adapte profundidade ao perfil do usuário: iniciante → linguagem simples sem siglas; especialista → inclua RSI, MA, volatilidade, etc.
 
 RELATÓRIOS:
 - Para análises financeiras, de mercado ou pesquisas complexas: use generate_report para estruturar o resultado profissionalmente
@@ -321,7 +321,7 @@ class ReActAgent:
         except json.JSONDecodeError:
             pass
 
-        # Conserta aspas simples â†’ duplas
+        # Conserta aspas simples → duplas
         try:
             fixed = text.replace("'", '"')
             return json.loads(fixed)
