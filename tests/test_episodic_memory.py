@@ -26,6 +26,9 @@ class _StubIndex:
     def add_episode(self, eid, summary, timestamp):
         pass
 
+    def delete_episode(self, eid):
+        pass
+
 
 class _StubKG:
     def get_context(self, task):

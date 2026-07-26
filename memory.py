@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import threading
+import uuid
 from datetime import datetime, timedelta
 
 BACKUP_DIR  = os.path.join(os.path.dirname(__file__), "workspace", "backups")
@@ -157,6 +158,22 @@ class VectorIndex:
         except Exception:
             pass
 
+    def delete_session(self, sid: str):
+        if not self._ok:
+            return
+        try:
+            self._sessions.delete(ids=[sid])
+        except Exception:
+            pass
+
+    def delete_episode(self, eid: str):
+        if not self._ok:
+            return
+        try:
+            self._episodes.delete(ids=[eid])
+        except Exception:
+            pass
+
     def search_sessions(self, query: str, n: int = 3) -> list[dict]:
         if not self._ok:
             return []
@@ -244,24 +261,49 @@ class Memory:
                 pass
         return {"sessions": [], "facts": [], "episodes": []}
 
+    @staticmethod
+    def _new_id(prefix: str) -> str:
+        """ID estável e único (independe de posição na lista) — o esquema antigo
+        usava índice+data (ex: 'f12_2026-07-23'), que colidia depois de qualquer
+        prune/trim (posições são reaproveitadas), fazendo o upsert do LanceDB
+        sobrescrever silenciosamente o fato/sessão/episódio errado."""
+        return f"{prefix}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}"
+
+    def _trim(self, key: str, cap: int, id_prefix: str) -> list[str]:
+        """Corta self.data[key] pros últimos `cap` itens, garantindo "id" estável
+        em cada um (backfill preguiçoso pra dado legado sem essa chave) e
+        retornando os ids que caíram fora — quem chama propaga pro delete do
+        índice, senão o LanceDB acumula entrada órfã pra sempre."""
+        items = self.data[key]
+        for item in items:
+            item.setdefault("id", self._new_id(id_prefix))
+        if len(items) <= cap:
+            return []
+        removed_ids = [item["id"] for item in items[:-cap]]
+        self.data[key] = items[-cap:]
+        return removed_ids
+
     def _sync_index(self):
-        """Indexa sessões e fatos existentes que ainda não estão no ChromaDB."""
+        """Indexa sessões/fatos/episódios existentes que ainda não estão no LanceDB."""
         if not self.index._ok:
             return
         try:
+            # garante ids estáveis ANTES de indexar — dado legado sem "id" faria
+            # todo mundo colidir em id="" no upsert (só o último sobreviveria)
+            self._prune_facts()
+            self._trim("sessions", 20, "s")
+            self._trim("episodes", MAX_EPISODES, "e")
+            self._save()
+
             if self.index._sessions.count() == 0:
-                for i, s in enumerate(self.data.get("sessions", [])):
-                    self.index.add_session(
-                        f"s{i}", s.get("task", ""), s.get("result", ""), s.get("timestamp", "")
-                    )
+                for s in self.data.get("sessions", []):
+                    self.index.add_session(s["id"], s.get("task", ""), s.get("result", ""), s.get("timestamp", ""))
             if self.index._facts.count() == 0:
-                for i, f in enumerate(self.data.get("facts", [])):
-                    text    = f.get("text", f) if isinstance(f, dict) else f
-                    created = f.get("created", "") if isinstance(f, dict) else ""
-                    self.index.add_fact(f"f{i}", text, created)
+                for f in self.data.get("facts", []):
+                    self.index.add_fact(f["id"], f.get("text", ""), f.get("created", ""))
             if self.index._episodes.count() == 0:
-                for i, e in enumerate(self.data.get("episodes", [])):
-                    self.index.add_episode(f"e{i}", e.get("summary", ""), e.get("timestamp", ""))
+                for e in self.data.get("episodes", []):
+                    self.index.add_episode(e["id"], e.get("summary", ""), e.get("timestamp", ""))
         except Exception as e:
             log.warning("_sync_index: %s", e)
 
@@ -270,19 +312,22 @@ class Memory:
             json.dump(self.data, f, indent=2, ensure_ascii=False)
 
     def save_session(self, task: str, result: str, scratchpad: list, session_id: str = ""):
-        ts = datetime.now().isoformat()
+        ts  = datetime.now().isoformat()
+        sid = self._new_id("s")
         session = {
+            "id":        sid,
             "timestamp": ts,
             "task":      task,
             "result":    result,
             "steps":     len(scratchpad),
         }
         self.data["sessions"].append(session)
-        self.data["sessions"] = self.data["sessions"][-20:]
+        removed_ids = self._trim("sessions", 20, "s")
         self._save()
         self._backup()
-        sid = f"s{len(self.data['sessions']) - 1}_{ts[:10]}"
         self.index.add_session(sid, task, result, ts)
+        for rid in removed_ids:
+            self.index.delete_session(rid)
         self._export_to_obsidian(session, scratchpad)
 
         # Salva no short-term
@@ -342,16 +387,28 @@ class Memory:
         except Exception:
             pass
 
-    def _prune_facts(self):
+    def _prune_facts(self) -> list[str]:
+        """Normaliza (dict + id estável, tolera fato legado como string crua),
+        aplica TTL e cap de tamanho. Retorna os ids que caíram fora — quem
+        chama propaga pro delete do índice (achado real: antes disso, fato
+        podia expirar/ser cortado do JSON e continuar pra sempre pesquisável
+        no LanceDB, órfão)."""
         cutoff = (datetime.now() - timedelta(days=FACT_TTL_DAYS)).isoformat()
-        kept = []
+        normalized = []
         for f in self.data["facts"]:
             if isinstance(f, dict):
-                if f.get("created", "") >= cutoff:
-                    kept.append(f)
+                f.setdefault("id", self._new_id("f"))
+                normalized.append(f)
             else:
-                kept.append({"text": f, "created": datetime.now().isoformat()})
-        self.data["facts"] = kept[-MAX_FACTS:]
+                normalized.append({"id": self._new_id("f"), "text": f, "created": datetime.now().isoformat()})
+
+        before_ids = {f["id"] for f in normalized}
+        kept = [f for f in normalized if f.get("created", "") >= cutoff]
+        kept = kept[-MAX_FACTS:]
+        after_ids = {f["id"] for f in kept}
+
+        self.data["facts"] = kept
+        return sorted(before_ids - after_ids)
 
     def save_fact(self, fact: str):
         existing = [
@@ -359,12 +416,14 @@ class Memory:
             for f in self.data["facts"]
         ]
         if fact not in existing:
-            ts = datetime.now().isoformat()
-            self.data["facts"].append({"text": fact, "created": ts})
-            self._prune_facts()
+            ts  = datetime.now().isoformat()
+            fid = self._new_id("f")
+            self.data["facts"].append({"id": fid, "text": fact, "created": ts})
+            removed_ids = self._prune_facts()
             self._save()
-            fid = f"f{len(self.data['facts']) - 1}_{ts[:10]}"
             self.index.add_fact(fid, fact, ts)
+            for rid in removed_ids:
+                self.index.delete_fact(rid)
 
     # ------------------------------------------------------------------
     # Episódios — resumo de uma sessão de conversa inteira, pra recall
@@ -403,17 +462,20 @@ class Memory:
         if not summary:
             return
 
-        ts = datetime.now().isoformat()
+        ts  = datetime.now().isoformat()
+        eid = self._new_id("e")
         self.data["episodes"].append({
+            "id":            eid,
             "session_id":    session_id,
             "timestamp":     ts,
             "summary":       summary,
             "message_count": len(msgs),
         })
-        self.data["episodes"] = self.data["episodes"][-MAX_EPISODES:]
+        removed_ids = self._trim("episodes", MAX_EPISODES, "e")
         self._save()
-        eid = f"e{len(self.data['episodes']) - 1}_{ts[:10]}"
         self.index.add_episode(eid, summary, ts)
+        for rid in removed_ids:
+            self.index.delete_episode(rid)
         self.short_term.clear(session_id)
 
     def get_last_episode_context(self, exclude_session_id: str = "") -> str:
