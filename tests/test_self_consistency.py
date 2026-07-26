@@ -24,17 +24,21 @@ class _StubProfile:
 
 
 class _ScriptedLLM:
-    """LLM falso: distingue a chamada de raciocínio ReAct da chamada de reflection
-    pelo conteúdo do prompt (a de reflection sempre pede o JSON de score)."""
+    """LLM falso: distingue a chamada de raciocínio ReAct, a de reflection (pede
+    JSON de score) e a de voto do self-consistency (lista "Candidatos de
+    resposta") pelo conteúdo do prompt."""
 
-    def __init__(self, react_responses, reflect_jsons):
+    def __init__(self, react_responses, reflect_jsons, vote_responses=None):
         self.model = "test-model"
         self.react_responses = list(react_responses)
         self.reflect_jsons = list(reflect_jsons)
+        self.vote_responses = list(vote_responses or [])
 
     def generate(self, prompt, on_token=None):
         if "Avalie se a resposta" in prompt:
             return self.reflect_jsons.pop(0)
+        if "Candidatos de resposta" in prompt:
+            return self.vote_responses.pop(0)
         resp = self.react_responses.pop(0)
         if on_token:
             for ch in resp:
@@ -60,9 +64,10 @@ def _bare_agent(llm):
 TASK = "escreva um resumo curto"  # curto, sem sequence word -> nunca cai em compound/conversational
 
 
-def test_self_consistency_keeps_first_answer_when_it_scored_higher(monkeypatch):
+def test_self_consistency_keeps_first_answer_when_vote_picks_it(monkeypatch):
     monkeypatch.setattr(agent_mod, "REFLECTION_ENABLED", True)
     monkeypatch.setattr(agent_mod, "REFLECTION_THRESHOLD", 4)  # 3 dispara retry
+    monkeypatch.setattr(agent_mod, "SELF_CONSISTENCY_MAX_ATTEMPTS", 2)  # trava no boundary de 2 tentativas
     llm = _ScriptedLLM(
         react_responses=[
             "Thought: pronto.\nFinal Answer: resposta A",
@@ -72,19 +77,21 @@ def test_self_consistency_keeps_first_answer_when_it_scored_higher(monkeypatch):
             '{"score": 3, "issues": ["faltou contexto"], "hint": "adicione contexto"}',
             '{"score": 2, "issues": [], "hint": ""}',
         ],
+        vote_responses=["0"],  # o juiz (holístico) escolhe o índice 0 -- resposta A
     )
     a = _bare_agent(llm)
 
     result = a.run(TASK, step_callback=None)
 
-    assert result == "resposta A"  # 1a (score 3) bateu a 2a (score 2) — self-consistency
+    assert result == "resposta A"
 
 
 def test_reflection_recorded_in_tracing_for_dashboard(monkeypatch):
     # taxa de reflection-rewrite no /metrics depende de tracing.record_reflection
-    # ser chamado na 1ª avaliação (não na 2ª, de self-consistency).
+    # ser chamado na 1ª avaliação (não nas seguintes, de self-consistency).
     monkeypatch.setattr(agent_mod, "REFLECTION_ENABLED", True)
     monkeypatch.setattr(agent_mod, "REFLECTION_THRESHOLD", 4)
+    monkeypatch.setattr(agent_mod, "SELF_CONSISTENCY_MAX_ATTEMPTS", 2)
     recorded = []
     monkeypatch.setattr(agent_mod.tracing, "record_reflection", lambda *a: recorded.append(a))
     llm = _ScriptedLLM(
@@ -96,6 +103,7 @@ def test_reflection_recorded_in_tracing_for_dashboard(monkeypatch):
             '{"score": 3, "issues": [], "hint": ""}',
             '{"score": 2, "issues": [], "hint": ""}',
         ],
+        vote_responses=["1"],
     )
     a = _bare_agent(llm)
 
@@ -104,9 +112,10 @@ def test_reflection_recorded_in_tracing_for_dashboard(monkeypatch):
     assert recorded == [(3, 4, False)]  # só a 1ª avaliação, score < threshold -> accepted=False
 
 
-def test_self_consistency_keeps_second_answer_when_rewrite_actually_improved(monkeypatch):
+def test_self_consistency_keeps_second_answer_when_vote_picks_it(monkeypatch):
     monkeypatch.setattr(agent_mod, "REFLECTION_ENABLED", True)
     monkeypatch.setattr(agent_mod, "REFLECTION_THRESHOLD", 4)
+    monkeypatch.setattr(agent_mod, "SELF_CONSISTENCY_MAX_ATTEMPTS", 2)
     llm = _ScriptedLLM(
         react_responses=[
             "Thought: pronto.\nFinal Answer: resposta A fraca",
@@ -116,21 +125,77 @@ def test_self_consistency_keeps_second_answer_when_rewrite_actually_improved(mon
             '{"score": 2, "issues": ["ruim"], "hint": "melhore"}',
             '{"score": 5, "issues": [], "hint": ""}',
         ],
+        vote_responses=["1"],  # juiz escolhe a 2ª -- consistente com o score bem maior
     )
     a = _bare_agent(llm)
 
     result = a.run(TASK, step_callback=None)
 
-    assert result == "resposta B, bem melhor"  # 2a (score 5) bateu a 1a (score 2) — comportamento normal
+    assert result == "resposta B, bem melhor"
+
+
+def test_vote_overrides_naive_max_score_pick(monkeypatch):
+    """Prova que é voto de verdade (julgamento holístico), não só argmax dos
+    scores do critic calculados isoladamente: candidato 1 tem score MENOR que
+    o candidato 0, mas o juiz escolhe o candidato 1 mesmo assim."""
+    monkeypatch.setattr(agent_mod, "REFLECTION_ENABLED", True)
+    monkeypatch.setattr(agent_mod, "REFLECTION_THRESHOLD", 4)
+    monkeypatch.setattr(agent_mod, "SELF_CONSISTENCY_MAX_ATTEMPTS", 2)
+    llm = _ScriptedLLM(
+        react_responses=[
+            "Thought: pronto.\nFinal Answer: resposta A (score alto isolado)",
+            "Thought: reescrevendo.\nFinal Answer: resposta B (score baixo isolado, mas o juiz prefere)",
+        ],
+        reflect_jsons=[
+            '{"score": 3, "issues": [], "hint": ""}',
+            '{"score": 2, "issues": [], "hint": ""}',
+        ],
+        vote_responses=["1"],  # juiz discorda do argmax (que seria 0)
+    )
+    a = _bare_agent(llm)
+
+    result = a.run(TASK, step_callback=None)
+
+    assert result == "resposta B (score baixo isolado, mas o juiz prefere)"
+
+
+def test_self_consistency_votes_among_three_independent_attempts(monkeypatch):
+    """Ensemble real: 3 tentativas independentes (não 2), voto decide entre
+    todas juntas — o item de roadmap pedia exatamente isso em vez do
+    best-of-2 sequencial antigo."""
+    monkeypatch.setattr(agent_mod, "REFLECTION_ENABLED", True)
+    monkeypatch.setattr(agent_mod, "REFLECTION_THRESHOLD", 4)
+    monkeypatch.setattr(agent_mod, "SELF_CONSISTENCY_MAX_ATTEMPTS", 3)
+    llm = _ScriptedLLM(
+        react_responses=[
+            "Thought: 1.\nFinal Answer: tentativa 1",
+            "Thought: 2.\nFinal Answer: tentativa 2",
+            "Thought: 3.\nFinal Answer: tentativa 3, a melhor de verdade",
+        ],
+        reflect_jsons=[
+            '{"score": 2, "issues": [], "hint": ""}',
+            '{"score": 2, "issues": [], "hint": ""}',
+            '{"score": 3, "issues": [], "hint": ""}',
+        ],
+        vote_responses=["2"],
+    )
+    a = _bare_agent(llm)
+
+    result = a.run(TASK, step_callback=None)
+
+    assert result == "tentativa 3, a melhor de verdade"
+    assert llm.react_responses == []
+    assert llm.reflect_jsons == []
 
 
 def test_self_consistency_guards_first_answer_against_ignored_tool_error(monkeypatch):
     """Bug real visto ao vivo: schedule_task remove com id inválido erra certo,
     mas o modelo escreve 'removido com sucesso' mesmo assim. _guard_final_answer
-    pega isso no caminho normal — mas quando self-consistency escolhe a 1ª
-    tentativa (por score), esse retorno pulava o guard. Trava regressão."""
+    pega isso no caminho normal — mas quando self-consistency escolhe uma
+    tentativa antiga (por voto), esse retorno pulava o guard. Trava regressão."""
     monkeypatch.setattr(agent_mod, "REFLECTION_ENABLED", True)
     monkeypatch.setattr(agent_mod, "REFLECTION_THRESHOLD", 4)
+    monkeypatch.setattr(agent_mod, "SELF_CONSISTENCY_MAX_ATTEMPTS", 2)
     llm = _ScriptedLLM(
         react_responses=[
             'Thought: vou remover.\nAction: schedule_task\nAction Input: {"action": "remove", "id": "xyz"}',
@@ -141,6 +206,7 @@ def test_self_consistency_guards_first_answer_against_ignored_tool_error(monkeyp
             '{"score": 3, "issues": ["nao confirmou"], "hint": "confirme"}',
             '{"score": 2, "issues": [], "hint": ""}',
         ],
+        vote_responses=["0"],  # juiz fica com a 1ª tentativa
     )
     class _FakeTool:
         description = "gerencia tarefas agendadas"
@@ -169,3 +235,4 @@ def test_no_retry_when_first_score_already_passes_threshold(monkeypatch):
 
     assert result == "resposta boa de primeira"
     assert llm.react_responses == []  # só uma chamada de raciocínio — nunca tentou reescrever
+    assert llm.vote_responses == []  # 1 único candidato — nunca chama o juiz (sem custo extra à toa)

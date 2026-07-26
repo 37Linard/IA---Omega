@@ -76,6 +76,7 @@ TASK_TIMEOUT      = 300    # timeout total da tarefa em segundos
 # ── Reflection Loop ─────────────────────────────────────────────────────────
 REFLECTION_ENABLED   = True   # crítico avalia própria resposta antes de entregar
 REFLECTION_THRESHOLD = 2      # score mínimo (1-5) — abaixo disso reescreve (2 = só reescreve se realmente ruim)
+SELF_CONSISTENCY_MAX_ATTEMPTS = 3   # até quantas Final Answer tenta antes de votar (1ª + reescritas)
 
 # ── Memória Tiered ───────────────────────────────────────────────────────────
 EMBED_MODEL     = "nomic-embed-text"     # embedding local via Ollama

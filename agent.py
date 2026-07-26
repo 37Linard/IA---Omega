@@ -13,7 +13,7 @@ if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-from config import TOOL_TIMEOUT, TOOL_TIMEOUTS, MAX_TOOL_CALLS, MAX_TOOL_RETRIES, MAX_STEPS, REFLECTION_ENABLED, REFLECTION_THRESHOLD, HITL_ENABLED, HITL_GATE_TIERS, TOOL_RISK_TIERS, DEFAULT_TOOL_RISK, TASK_TIMEOUT, ALWAYS_HITL_TOOLS
+from config import TOOL_TIMEOUT, TOOL_TIMEOUTS, MAX_TOOL_CALLS, MAX_TOOL_RETRIES, MAX_STEPS, REFLECTION_ENABLED, REFLECTION_THRESHOLD, SELF_CONSISTENCY_MAX_ATTEMPTS, HITL_ENABLED, HITL_GATE_TIERS, TOOL_RISK_TIERS, DEFAULT_TOOL_RISK, TASK_TIMEOUT, ALWAYS_HITL_TOOLS
 import audit
 import tracing
 import circuit_breaker
@@ -526,6 +526,34 @@ class ReActAgent:
             log.debug("_reflect: %s", e)
             return 4, "", []
 
+    def _vote_best_answer(self, task: str, candidates: list[tuple[int, str]]) -> int:
+        """Vota entre candidatos de Final Answer coletados (self-consistency real:
+        N tentativas independentes, não 2 sequenciais). Julgamento holístico — o
+        LLM vê todos os candidatos juntos e escolhe — em vez de só comparar
+        scores calculados isoladamente um contra o outro em chamadas separadas
+        de _reflect (mais ruidoso: nada garante que o critic calibra igual entre
+        chamadas). Retorna o índice vencedor; cai pro maior score individual se
+        o voto falhar/vier malformado."""
+        if len(candidates) <= 1:
+            return 0
+        options = "\n".join(f"[{i}] {ans[:400]}" for i, (_, ans) in enumerate(candidates))
+        prompt = (
+            f"PERGUNTA ORIGINAL: {task[:300]}\n\n"
+            f"Candidatos de resposta:\n{options}\n\n"
+            "Qual candidato responde melhor e com mais precisão a pergunta original? "
+            "Responda APENAS com o número do índice (ex: 0).\n\nÍndice:"
+        )
+        try:
+            raw = self.llm.generate(prompt)
+            match = re.search(r"\d+", raw)
+            if match:
+                idx = int(match.group())
+                if 0 <= idx < len(candidates):
+                    return idx
+        except Exception as e:
+            log.debug("_vote_best_answer: %s", e)
+        return max(range(len(candidates)), key=lambda i: candidates[i][0])
+
     def _is_compound(self, task: str) -> bool:
         from orchestrator import is_multi_domain
         return is_multi_domain(task, min_domains=2)
@@ -655,29 +683,66 @@ class ReActAgent:
         return f"Passo {step_num} incompleto após 5 tentativas."
 
     def _make_streaming_cb(self, emit):
-        """Callback stateful: roteia tokens para thought ou final box."""
+        """Callback stateful: roteia tokens pra thought, tool-call parcial ou
+        final box. Antes só a Final Answer streamava — Action/Action Input
+        apareciam como texto bruto na caixa de pensamento e só viravam um
+        evento estruturado depois que a resposta INTEIRA terminava de gerar
+        e era parseada. Agora Action (nome da tool) e Action Input (JSON dos
+        argumentos) ganham eventos próprios assim que aparecem no stream —
+        igual ao streaming de tool-call parcial das APIs de function-calling
+        (a UI já mostra "chamando X..." e o JSON sendo digitado). Isso é só
+        exibição: a tool continua só executando depois do JSON completo e
+        validado — não dá pra rodar um argumento pela metade."""
         buf = []
-        final_started = [False]
+        final_started        = [False]
+        action_started       = [False]
+        action_input_started = [False]
 
         def on_token(token):
             buf.append(token)
             full = "".join(buf)
-            if not final_started[0]:
-                if "Final Answer:" in full:
-                    fa_idx     = full.index("Final Answer:")
-                    action_idx = full.find("Action:")
-                    if action_idx == -1 or action_idx > fa_idx:
-                        final_started[0] = True
-                        emit({"type": "final_stream_start", "content": ""})
-                        already = full[fa_idx + len("Final Answer:"):].lstrip("\n ")
-                        if already:
-                            emit({"type": "final_token", "content": already})
-                        return
-                emit({"type": "token", "content": token})
-            else:
-                emit({"type": "final_token", "content": token})
 
-        return on_token, final_started
+            if final_started[0]:
+                emit({"type": "final_token", "content": token})
+                return
+
+            if action_input_started[0]:
+                emit({"type": "action_input_token", "content": token})
+                return
+
+            if "Final Answer:" in full:
+                fa_idx     = full.index("Final Answer:")
+                action_idx = full.find("Action:")
+                if action_idx == -1 or action_idx > fa_idx:
+                    final_started[0] = True
+                    emit({"type": "final_stream_start", "content": ""})
+                    already = full[fa_idx + len("Final Answer:"):].lstrip("\n ")
+                    if already:
+                        emit({"type": "final_token", "content": already})
+                    return
+
+            if action_started[0]:
+                if "Action Input:" in full:
+                    ai_idx = full.index("Action Input:")
+                    action_input_started[0] = True
+                    emit({"type": "action_input_start", "content": ""})
+                    already = full[ai_idx + len("Action Input:"):].lstrip(" ")
+                    if already:
+                        emit({"type": "action_input_token", "content": already})
+                    return
+                emit({"type": "token", "content": token})
+                return
+
+            a_idx = full.find("Action:")
+            if a_idx != -1 and "\n" in full[a_idx:]:
+                tool_name = full[a_idx + len("Action:"):].split("\n", 1)[0].strip()
+                action_started[0] = True
+                emit({"type": "action_start", "content": tool_name})
+                return
+
+            emit({"type": "token", "content": token})
+
+        return on_token, final_started, action_started
 
     # ── Padrões de conversa casual ──────────────────────────────────────
     _CONV_PATTERNS = re.compile(
@@ -751,8 +816,7 @@ class ReActAgent:
     def run(self, task: str, max_steps: int = MAX_STEPS, step_callback=None) -> str:
         self.scratchpad  = []
         self._tool_calls = 0
-        self._reflected  = False   # previne loop infinito de reflection
-        self._reflection_candidate = None  # (score, answer) da 1ª tentativa — self-consistency
+        self._reflection_candidates = []   # [(score, answer), ...] — self-consistency (ensemble/voto)
         log.info("TAREFA: %s", task)
 
         self.profile.observe_message(task)
@@ -842,12 +906,14 @@ class ReActAgent:
             # Streaming — roteia tokens: thought bubble ou final box
             emit({"type": "token_start", "content": ""})
             if step_callback:
-                _cb, _fs = self._make_streaming_cb(emit)
+                _cb, _fs, _as = self._make_streaming_cb(emit)
             else:
-                _cb, _fs = None, [False]
+                _cb, _fs, _as = None, [False], [False]
             response = self.llm.generate(prompt, on_token=_cb)
             if _fs[0]:
                 emit({"type": "final_stream_end", "content": ""})
+            elif _as[0]:
+                emit({"type": "action_stream_end", "content": ""})
             else:
                 emit({"type": "token_end", "content": ""})
 
@@ -917,11 +983,19 @@ class ReActAgent:
                     if img_match and img_match.group(0) not in action_input:
                         action_input = action_input.rstrip() + "\n\n" + img_match.group(0)
 
-                # Reflection loop — critica antes de aceitar
-                if REFLECTION_ENABLED and not self._reflected:
-                    self._reflected = True
+                # Reflection / self-consistency — critica antes de aceitar. Se a
+                # tentativa for fraca, coleta até SELF_CONSISTENCY_MAX_ATTEMPTS
+                # candidatos e VOTA entre eles (julgamento holístico, vendo todos
+                # juntos) em vez de só comparar scores calculados isoladamente
+                # um contra o outro (ruidoso — o critic pode calibrar diferente
+                # entre chamadas separadas) ou aceitar a reescrita mais recente
+                # às cegas.
+                force_final_emit = False
+
+                if REFLECTION_ENABLED:
                     score, hint, issues = self._reflect(task, action_input)
-                    tracing.record_reflection(score, REFLECTION_THRESHOLD, score >= REFLECTION_THRESHOLD)
+                    if not self._reflection_candidates:
+                        tracing.record_reflection(score, REFLECTION_THRESHOLD, score >= REFLECTION_THRESHOLD)
                     rc = f"Score {score}/5"
                     if issues:
                         rc += " — " + "; ".join(issues[:2])
@@ -933,16 +1007,13 @@ class ReActAgent:
                     })
                     log.info("REFLECTION: score=%d hint=%s", score, hint[:80] if hint else "")
 
-                    if score < REFLECTION_THRESHOLD:
+                    self._reflection_candidates.append((score, action_input))
+                    can_retry = len(self._reflection_candidates) < SELF_CONSISTENCY_MAX_ATTEMPTS
+
+                    if score < REFLECTION_THRESHOLD and can_retry:
                         # Streaming já emitiu tokens — reseta conteúdo no frontend
                         if _fs[0]:
                             emit({"type": "reset_content", "content": ""})
-                        # Guarda essa tentativa — reescrever não garante melhora (é o mesmo
-                        # modelo pequeno reescrevendo a partir do mesmo scratchpad que já
-                        # produziu a resposta fraca). Self-consistency compara as duas no
-                        # final e fica com a de maior score, em vez de aceitar a reescrita
-                        # às cegas só por ser a mais recente.
-                        self._reflection_candidate = (score, action_input)
                         retry_hint = (
                             f"Thought: Minha resposta foi avaliada com score {score}/5 (minimo={REFLECTION_THRESHOLD}).\n"
                             + (f"Problemas: {'; '.join(issues)}\n" if issues else "")
@@ -950,35 +1021,33 @@ class ReActAgent:
                             + "Vou reescrever a Final Answer de forma mais completa e precisa.\n"
                         )
                         self.scratchpad.append(retry_hint)
-                        log.info("REFLECTION: reescrevendo resposta...")
+                        log.info("REFLECTION: reescrevendo resposta (tentativa %d/%d)...",
+                                  len(self._reflection_candidates) + 1, SELF_CONSISTENCY_MAX_ATTEMPTS)
                         continue
 
-                elif REFLECTION_ENABLED and self._reflection_candidate is not None:
-                    # Segunda Final Answer, depois de um retry por score baixo — reflete
-                    # de novo (self-consistency: melhor-de-2, não "última resposta vence").
-                    score1, answer1 = self._reflection_candidate
-                    self._reflection_candidate = None
-                    score2, hint2, issues2 = self._reflect(task, action_input)
-                    better_is_first = score1 > score2
-                    emit({
-                        "type":     "reflection",
-                        "content":  f"2ª tentativa: {score2}/5 (1ª foi {score1}/5) — self-consistency ficou com a {'1ª' if better_is_first else '2ª'}",
-                        "score":    score2,
-                        "accepted": True,
-                    })
-                    log.info("SELF-CONSISTENCY: tentativa1=%d tentativa2=%d -> usando %s",
-                              score1, score2, "1a" if better_is_first else "2a")
-                    if better_is_first:
-                        action_input = self._guard_final_answer(answer1, emit=emit)
-                        emit({"type": "reset_content", "content": ""})
-                        emit({"type": "final", "content": action_input})
-                        self.memory.save_session_with_llm(task, action_input[:200], self.scratchpad, self.llm, self.session_id)
-                        self.conversation = self.conversation[-4:]
-                        self.conversation.append({"task": task, "result": action_input[:400]})
-                        return action_input
+                    if len(self._reflection_candidates) > 1:
+                        winner_idx = self._vote_best_answer(task, self._reflection_candidates)
+                        winner_score, winner_answer = self._reflection_candidates[winner_idx]
+                        emit({
+                            "type":    "reflection",
+                            "content": (
+                                f"Self-consistency: {len(self._reflection_candidates)} tentativas, "
+                                f"voto escolheu a nº{winner_idx + 1} (score {winner_score}/5)"
+                            ),
+                            "score":    winner_score,
+                            "accepted": True,
+                        })
+                        log.info("SELF-CONSISTENCY: %d tentativas -> voto escolheu #%d (score %d)",
+                                  len(self._reflection_candidates), winner_idx, winner_score)
+                        action_input = winner_answer
+                        if winner_idx != len(self._reflection_candidates) - 1:
+                            # o voto ficou com uma tentativa anterior, não a última
+                            # que o frontend acabou de streamar — força reset+reemite
+                            emit({"type": "reset_content", "content": ""})
+                            force_final_emit = True
 
                 action_input = self._guard_final_answer(action_input, emit=emit)
-                if not _fs[0]:
+                if force_final_emit or not _fs[0]:
                     emit({"type": "final", "content": action_input})
                 self.memory.save_session_with_llm(task, action_input[:200], self.scratchpad, self.llm, self.session_id)
                 self.conversation = self.conversation[-4:]
