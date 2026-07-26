@@ -215,6 +215,16 @@ async def get_metrics():
     }
 
 
+@app.get("/metrics/prometheus")
+async def get_metrics_prometheus():
+    """Mesmos dados de /metrics (JSON), formatados pro Prometheus fazer scrape.
+    Grafana lê daqui em vez de só do endpoint REST — ver metrics_prometheus.py."""
+    import metrics_prometheus
+    data = await get_metrics()
+    return Response(content=metrics_prometheus.render_metrics(data),
+                     media_type="text/plain; version=0.0.4; charset=utf-8")
+
+
 @app.get("/health")
 async def get_health():
     import subprocess, requests as req

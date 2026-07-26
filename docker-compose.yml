@@ -24,5 +24,36 @@ services:
     command: redis-server --appendonly yes
     restart: unless-stopped
 
+  # Observabilidade — opcional, suba com: docker compose up -d prometheus grafana
+  # (não faz parte do `agent`/`redis` que já rodam sempre; ninguém precisa
+  # disso pra usar o agente no dia a dia, só pra visualizar tracing.py/
+  # audit.py/circuit_breaker.py ao longo do tempo em vez de só o snapshot
+  # atual do /metrics REST).
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"   # 3000 já é o frontend Next.js
+    volumes:
+      - ./monitoring/grafana-provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 volumes:
   redis_data:
+  prometheus_data:
+  grafana_data:
