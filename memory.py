@@ -18,6 +18,7 @@ EPISODE_MIN_MSGS = 2   # sessão com só 1 msg (ou 0) não vira episódio — na
 
 MEMORY_FILE = os.path.join(os.path.dirname(__file__), "agent_memory.json")
 LANCE_MEMORY_DIR = os.path.join(os.path.dirname(__file__), "workspace", "lance_memory_db")
+LEGACY_GRAPH_FILE = os.path.join(os.path.dirname(__file__), "workspace", "knowledge_graph.json")
 
 from config import OBSIDIAN_BASE, REDIS_URL, SHORT_TERM_TTL, SHORT_TERM_MSGS, link_note_in_conversas_index
 OBSIDIAN_SESSIONS_DIR = os.path.join(OBSIDIAN_BASE, "Gabriel", "Projetos", "Agente IA Local", "Conversas")
@@ -238,6 +239,7 @@ class Memory:
     def __init__(self):
         self.data       = self._load()
         self.data.setdefault("episodes", [])
+        self._migrate_legacy_kg()
         self.index      = VectorIndex(LANCE_MEMORY_DIR)
         self.short_term = ShortTermMemory()
         self._sync_index()
@@ -249,7 +251,7 @@ class Memory:
     def kg(self):
         if self._kg is None:
             from knowledge_graph import KnowledgeGraph
-            self._kg = KnowledgeGraph()
+            self._kg = KnowledgeGraph(self.data.setdefault("kg", {"entities": {}, "relations": []}), self._save)
         return self._kg
 
     def _load(self) -> dict:
@@ -260,6 +262,27 @@ class Memory:
             except Exception:
                 pass
         return {"sessions": [], "facts": [], "episodes": []}
+
+    def _migrate_legacy_kg(self):
+        """workspace/knowledge_graph.json era um arquivo/lock/backup separado —
+        unificado pra dentro de agent_memory.json (chave "kg"), 1x, na primeira
+        carga depois do upgrade. Só roda se "kg" ainda não existe no JSON
+        principal (idempotente) e o arquivo legado existe. Renomeia em vez de
+        apagar (reversível) — dado real de produção, não é scratch."""
+        if "kg" in self.data or not os.path.exists(LEGACY_GRAPH_FILE):
+            return
+        try:
+            with open(LEGACY_GRAPH_FILE, "r", encoding="utf-8") as f:
+                legacy = json.load(f)
+            self.data["kg"] = {
+                "entities": legacy.get("entities", {}),
+                "relations": legacy.get("relations", []),
+            }
+            self._save()
+            os.rename(LEGACY_GRAPH_FILE, LEGACY_GRAPH_FILE + ".migrated")
+            log.info("Memory: knowledge_graph.json migrado pra agent_memory.json (kg), arquivo antigo renomeado .migrated")
+        except Exception as e:
+            log.warning("Memory._migrate_legacy_kg: %s", e)
 
     @staticmethod
     def _new_id(prefix: str) -> str:

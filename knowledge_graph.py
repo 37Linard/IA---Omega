@@ -1,40 +1,36 @@
 """
 Knowledge Graph — extrai e armazena entidades + relações da conversa.
-Persiste em workspace/knowledge_graph.json.
-Extração acontece em background (não bloqueia resposta).
+Persistência delegada: opera sobre o dict compartilhado do Memory (chave "kg")
+e usa o save_fn do Memory, em vez de dono do próprio arquivo/lock (era
+workspace/knowledge_graph.json separado — unificado em agent_memory.json
+pra ter 1 lock/1 backup/1 rotina de retenção, não 2). Extração acontece em
+background (não bloqueia resposta).
 """
-import json
 import logging
-import os
-import re
 import threading
 from datetime import datetime, timedelta
+from typing import Callable
 
 log = logging.getLogger(__name__)
 
-GRAPH_FILE = os.path.join(os.path.dirname(__file__), "workspace", "knowledge_graph.json")
 MAX_ENTITIES  = 500
 MAX_RELATIONS = 2000
 
 
+def empty_graph() -> dict:
+    return {"entities": {}, "relations": []}
+
+
 class KnowledgeGraph:
-    def __init__(self):
+    def __init__(self, graph: dict, save_fn: Callable[[], None]):
+        """`graph` é a referência viva de `Memory.data["kg"]` (mesmo objeto,
+        não cópia) — mutações aqui já ficam visíveis pro Memory sem sync
+        extra. `save_fn` é `Memory._save`, serializa o dict inteiro (sessions/
+        facts/episodes/kg juntos) — mesmo padrão que save_session/save_fact
+        já usam."""
         self._lock  = threading.Lock()
-        self._graph = self._load()
-
-    def _load(self) -> dict:
-        if os.path.exists(GRAPH_FILE):
-            try:
-                with open(GRAPH_FILE, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
-        return {"entities": {}, "relations": []}
-
-    def _save(self):
-        os.makedirs(os.path.dirname(GRAPH_FILE), exist_ok=True)
-        with open(GRAPH_FILE, "w", encoding="utf-8") as f:
-            json.dump(self._graph, f, indent=2, ensure_ascii=False)
+        self._graph = graph
+        self._save  = save_fn
 
     def add_triple(self, subject: str, predicate: str, obj: str):
         subject   = subject.strip()[:80]
@@ -116,6 +112,7 @@ class KnowledgeGraph:
         t.start()
 
     def _extract(self, text: str, llm) -> None:
+        import json
         prompt = (
             "Extraia entidades e relações do texto abaixo. "
             "Responda APENAS em JSON válido (sem texto adicional):\n"

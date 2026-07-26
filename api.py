@@ -177,7 +177,7 @@ async def get_metrics():
     from audit import tool_stats as _tool_stats
     import tracing as _tracing
     import circuit_breaker as _circuit_breaker
-    from knowledge_graph import KnowledgeGraph as _KnowledgeGraph
+    from memory import Memory as _Memory
 
     # VRAM via nvidia-smi
     vram: dict = {}
@@ -194,7 +194,7 @@ async def get_metrics():
         pass
 
     try:
-        kg_stats = _KnowledgeGraph().stats()
+        kg_stats = _Memory().kg.stats()
     except Exception:
         kg_stats = {"entities": 0, "relations": 0}
 
@@ -472,21 +472,21 @@ async def post_specialist_model(body: dict, _rl=Depends(_check_rate_limit)):
 
 @app.get("/kg/stats")
 async def kg_stats():
-    from knowledge_graph import KnowledgeGraph
-    return KnowledgeGraph().stats()
+    from memory import Memory
+    return Memory().kg.stats()
 
 
 @app.get("/kg/query")
 async def kg_query(topic: str = "", limit: int = 20):
-    from knowledge_graph import KnowledgeGraph
-    kg = KnowledgeGraph()
+    from memory import Memory
+    kg = Memory().kg
     return {"topic": topic, "facts": kg.query(topic, max_results=min(limit, 50))}
 
 
 @app.post("/kg/consolidate")
 async def kg_consolidate(max_age_days: int = 90, min_count: int = 2):
-    from knowledge_graph import KnowledgeGraph
-    kg = KnowledgeGraph()
+    from memory import Memory
+    kg = Memory().kg
     return kg.consolidate(max_age_days=max_age_days, min_count=min_count)
 
 

@@ -2,15 +2,14 @@ from datetime import datetime, timedelta
 
 import pytest
 
-import knowledge_graph as kg_mod
-from knowledge_graph import KnowledgeGraph
+from knowledge_graph import KnowledgeGraph, empty_graph
 
 
 @pytest.fixture
-def isolated_kg(tmp_path, monkeypatch):
-    """KnowledgeGraph isolado — nunca toca workspace/knowledge_graph.json real."""
-    monkeypatch.setattr(kg_mod, "GRAPH_FILE", str(tmp_path / "knowledge_graph.json"))
-    return KnowledgeGraph()
+def isolated_kg():
+    """KnowledgeGraph isolado — dict solto em memória, save_fn no-op. Persistência
+    de verdade (agent_memory.json) é coberta em test_memory_index_consistency.py."""
+    return KnowledgeGraph(empty_graph(), save_fn=lambda: None)
 
 
 def _iso_days_ago(days: int) -> str:
@@ -93,14 +92,27 @@ def test_consolidate_never_removes_legacy_relations_without_timestamp(isolated_k
     assert result == {"removed_relations": 0, "removed_entities": 0}
 
 
-def test_consolidate_persists_changes_to_disk(isolated_kg):
-    kg = isolated_kg
-    kg._graph["relations"] = [
-        {"s": "A", "p": "rel", "o": "B", "count": 1, "first_seen": _iso_days_ago(200), "last_seen": _iso_days_ago(200)},
-    ]
-    kg._graph["entities"] = {"A": {"count": 1}, "B": {"count": 1}}
+def test_consolidate_calls_save_fn_only_when_something_changes():
+    calls = []
+    kg = KnowledgeGraph(empty_graph(), save_fn=lambda: calls.append(1))
+    kg._graph["relations"] = [{"s": "A", "p": "rel", "o": "B", "count": 1}]  # sem last_seen, nunca removido
+    kg._graph["entities"]  = {"A": {"count": 1}, "B": {"count": 1}}
 
     kg.consolidate(max_age_days=90, min_count=2)
 
-    reloaded = KnowledgeGraph()
-    assert reloaded._graph["relations"] == []
+    assert calls == []  # nada mudou -> não salva
+
+
+def test_kg_persists_through_shared_memory_data_and_save_fn():
+    """Prova a unificação de verdade: duas instâncias de KnowledgeGraph que
+    compartilham o MESMO dict (como Memory.kg faz via self.data) enxergam a
+    mutação uma da outra sem round-trip de disco."""
+    shared = empty_graph()
+    saved  = {"n": 0}
+
+    kg1 = KnowledgeGraph(shared, save_fn=lambda: saved.__setitem__("n", saved["n"] + 1))
+    kg1.add_triple("Gabriel", "gosta de", "Rust")
+
+    kg2 = KnowledgeGraph(shared, save_fn=lambda: None)
+    assert kg2.stats() == {"entities": 2, "relations": 1}
+    assert saved["n"] == 1
