@@ -18,6 +18,7 @@ playwright==1.61.0
 redis==8.0.1
 networkx==3.6.1
 wasmtime==46.0.1
+cryptography==49.0.0
 
 # generate_image_tool (Stable Diffusion local) — opcional, downloads grandes
 # Windows + GPU: instale torch com CUDA ANTES deste arquivo, ex.:

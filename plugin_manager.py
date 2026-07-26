@@ -18,6 +18,17 @@ MODELO DE SEGURANÇA (leia antes de habilitar):
      supply-chain onde o autor troca o arquivo depois que alguém revisou —
      a verificação falha alto e a instalação é abortada.
 
+  2b. Hash sozinho só prova que "o código bate com o que está escrito no
+      manifest" — não prova QUEM escreveu o manifest. Qualquer atacante
+      controla os dois lados (manifest + code_url) e o hash sempre vai
+      bater com ele mesmo. Por isso o manifest também exige `author_id` +
+      `signature` (Ed25519) — a assinatura só verifica contra uma chave
+      pública que VOCÊ adicionou manualmente em
+      `plugins/trusted_authors.json` (`trust_author()`/`python
+      plugin_manager.py trust`), nunca baixada automaticamente. Sem isso
+      seria só TOFU (confia na 1ª vez que vê), que não protege nada contra
+      o 1º contato malicioso.
+
   3. `stage()` só baixa e verifica o hash — grava em
      `plugins/<nome>.staged.py`, nada executável ainda. `approve()` move
      pra `plugins/<nome>.py` — mas só depois de VOCÊ ter lido o código.
@@ -38,14 +49,33 @@ Uso (manual, no terminal — nunca chamado pelo agente):
     python plugin_manager.py approve <nome>
     python plugin_manager.py run <nome> '{"param": "valor"}'   # só com PLUGINS_ENABLED=True
 
+    # Do lado do AUTOR do plugin (gera chave, assina o manifest):
+    python plugin_manager.py keygen
+    python plugin_manager.py sign <name> <version> <code_sha256> <chave_privada_hex>
+
+    # Do lado do OPERADOR (você — decide em quem confiar):
+    python plugin_manager.py trust <author_id> <chave_publica_hex>
+    python plugin_manager.py untrust <author_id>
+    python plugin_manager.py trusted
+
 Formato do manifest (JSON, hospedado pelo autor do plugin):
     {
       "name": "meu_plugin",
       "version": "1.0.0",
       "description": "o que a tool faz",
       "code_url": "https://.../meu_plugin.py",
-      "code_sha256": "<hash sha256 do conteudo de code_url>"
+      "code_sha256": "<hash sha256 do conteudo de code_url>",
+      "author_id": "<identificador do autor, escolhido por ele>",
+      "signature": "<assinatura Ed25519 hex — ver 'python plugin_manager.py sign'>"
     }
+
+O autor assina com `python plugin_manager.py keygen` (gera par de chaves,
+guarda a privada em segredo) e `python plugin_manager.py sign <name>
+<version> <code_sha256> <chave_privada_hex>`. Você (operador) recebe a
+chave PÚBLICA do autor por um canal que confia (não pelo próprio manifest —
+isso seria confiar no atacante pra dizer se ele é confiável) e roda
+`python plugin_manager.py trust <author_id> <chave_publica_hex>` antes de
+instalar qualquer plugin desse autor.
 
 O arquivo em code_url precisa definir uma função `run(params: dict) -> str`
 — mesma assinatura das tools nativas em tools/*_tool.py.
@@ -57,16 +87,112 @@ import os
 import re
 import sys
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+
 log = logging.getLogger(__name__)
 
-_PROJECT    = os.path.dirname(os.path.abspath(__file__))
-PLUGINS_DIR = os.path.join(_PROJECT, "plugins")
+_PROJECT             = os.path.dirname(os.path.abspath(__file__))
+PLUGINS_DIR          = os.path.join(_PROJECT, "plugins")
+TRUSTED_AUTHORS_FILE = os.path.join(PLUGINS_DIR, "trusted_authors.json")
 
-REQUIRED_MANIFEST_FIELDS = {"name", "version", "description", "code_url", "code_sha256"}
+REQUIRED_MANIFEST_FIELDS = {"name", "version", "description", "code_url", "code_sha256", "author_id", "signature"}
 
 
 class PluginError(Exception):
     pass
+
+
+# ---------------------------------------------------------------------------
+# Confiança de autor — chaves públicas Ed25519 adicionadas manualmente pelo
+# operador (nunca baixadas automaticamente de lugar nenhum)
+# ---------------------------------------------------------------------------
+def _load_trusted_authors() -> dict[str, str]:
+    if not os.path.isfile(TRUSTED_AUTHORS_FILE):
+        return {}
+    try:
+        with open(TRUSTED_AUTHORS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_trusted_authors(authors: dict[str, str]):
+    os.makedirs(PLUGINS_DIR, exist_ok=True)
+    with open(TRUSTED_AUTHORS_FILE, "w", encoding="utf-8") as f:
+        json.dump(authors, f, indent=2, ensure_ascii=False)
+
+
+def trust_author(author_id: str, pubkey_hex: str):
+    """Adiciona/atualiza a chave pública de um autor confiado. Valida que a
+    chave é uma Ed25519 pública de verdade antes de gravar — erro de digitação
+    na hex vira `PluginError` na hora, não um "confiado" quebrado em silêncio."""
+    try:
+        Ed25519PublicKey.from_public_bytes(bytes.fromhex(pubkey_hex))
+    except Exception as e:
+        raise PluginError(f"chave pública inválida pra '{author_id}': {e}")
+    authors = _load_trusted_authors()
+    authors[author_id] = pubkey_hex.lower()
+    _save_trusted_authors(authors)
+    log.info("Autor '%s' confiado (pubkey %s...)", author_id, pubkey_hex[:12])
+
+
+def untrust_author(author_id: str):
+    authors = _load_trusted_authors()
+    if authors.pop(author_id, None) is not None:
+        _save_trusted_authors(authors)
+        log.info("Autor '%s' removido da lista de confiança", author_id)
+
+
+def list_trusted_authors() -> list[dict]:
+    return [{"author_id": a, "pubkey": k} for a, k in sorted(_load_trusted_authors().items())]
+
+
+def _signing_payload(name: str, version: str, code_sha256: str) -> bytes:
+    """Payload canônico assinado/verificado — inclui name+version além do
+    hash pra uma assinatura válida de UM plugin não poder ser reaproveitada
+    (replay) pra fazer outro plugin (ou outra versão) parecer assinado."""
+    return f"{name}|{version}|{code_sha256.lower()}".encode("utf-8")
+
+
+def generate_keypair() -> tuple[str, str]:
+    """Utilitário pro AUTOR do plugin gerar seu par de chaves. Retorna
+    (chave_privada_hex, chave_publica_hex) — a privada nunca sai da máquina
+    do autor, só a pública vai pro operador confiar."""
+    priv = Ed25519PrivateKey.generate()
+    return priv.private_bytes_raw().hex(), priv.public_key().public_bytes_raw().hex()
+
+
+def sign_payload(name: str, version: str, code_sha256: str, private_key_hex: str) -> str:
+    """Utilitário pro AUTOR assinar o manifest antes de publicar."""
+    try:
+        priv = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(private_key_hex))
+    except Exception as e:
+        raise PluginError(f"chave privada inválida: {e}")
+    return priv.sign(_signing_payload(name, version, code_sha256)).hex()
+
+
+def _verify_signature(manifest: dict, code_sha256: str):
+    """Verifica manifest['signature'] contra a chave pública confiada de
+    manifest['author_id']. Autor não-confiado ou assinatura inválida ->
+    PluginError, mesma severidade do hash não bater."""
+    author_id = str(manifest["author_id"])
+    authors = _load_trusted_authors()
+    pubkey_hex = authors.get(author_id)
+    if not pubkey_hex:
+        raise PluginError(
+            f"AUTOR NÃO CONFIADO: '{author_id}'. Adicione a chave pública dele com "
+            f"'python plugin_manager.py trust {author_id} <chave_publica_hex>' "
+            "(recebida por um canal que você confia) antes de instalar. Instalação abortada."
+        )
+    try:
+        pubkey = Ed25519PublicKey.from_public_bytes(bytes.fromhex(pubkey_hex))
+        signature = bytes.fromhex(str(manifest["signature"]))
+        pubkey.verify(signature, _signing_payload(manifest["name"], manifest["version"], code_sha256))
+    except Exception as e:
+        raise PluginError(
+            f"ASSINATURA INVÁLIDA pra '{manifest['name']}' do autor '{author_id}' — "
+            f"o manifest pode ter sido adulterado ou forjado. Instalação abortada. ({e})"
+        )
 
 
 def _safe_name(name: str) -> str:
@@ -107,6 +233,11 @@ def stage(manifest_url: str) -> str:
             "desde que o manifest foi publicado, ou o manifest está errado). "
             f"esperado={expected_hash} obtido={actual_hash}. Instalação abortada."
         )
+
+    # Hash só prova "código bate com o manifest" — não prova quem escreveu o
+    # manifest. Assinatura verifica contra uma chave que O OPERADOR escolheu
+    # confiar antes, não algo que o próprio manifest pode alegar sozinho.
+    _verify_signature(manifest, actual_hash)
 
     os.makedirs(PLUGINS_DIR, exist_ok=True)
     staged_path   = os.path.join(PLUGINS_DIR, f"{name}.staged.py")
@@ -202,6 +333,22 @@ if __name__ == "__main__":
             approve(sys.argv[2])
         elif cmd == "run" and len(sys.argv) == 4:
             print(run_plugin(sys.argv[2], json.loads(sys.argv[3])))
+        elif cmd == "keygen":
+            priv_hex, pub_hex = generate_keypair()
+            print(f"chave privada (GUARDE EM SEGREDO): {priv_hex}")
+            print(f"chave pública (envie pro operador confiar):  {pub_hex}")
+        elif cmd == "sign" and len(sys.argv) == 6:
+            print(sign_payload(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]))
+        elif cmd == "trust" and len(sys.argv) == 4:
+            trust_author(sys.argv[2], sys.argv[3])
+        elif cmd == "untrust" and len(sys.argv) == 3:
+            untrust_author(sys.argv[2])
+        elif cmd == "trusted":
+            trusted = list_trusted_authors()
+            if not trusted:
+                print("Nenhum autor confiado.")
+            for t in trusted:
+                print(f"  {t['author_id']} — {t['pubkey'][:16]}...")
         else:
             print(__doc__)
             sys.exit(1)
