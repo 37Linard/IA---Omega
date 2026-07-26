@@ -1,0 +1,9 @@
+[
+  {
+    "name": "exemplo_plugin",
+    "description": "Só um exemplo do formato — não é um plugin real, não instale isso.",
+    "author_id": "autor_exemplo",
+    "manifest_url": "https://exemplo.invalid/exemplo_plugin/manifest.json",
+    "tags": ["exemplo", "template"]
+  }
+]

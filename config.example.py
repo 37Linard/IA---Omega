@@ -154,6 +154,13 @@ IMAGE_GEN_UNLOAD_OLLAMA  = True     # descarrega Ollama da VRAM antes de gerar n
 # -- Plugin marketplace (opcional, desligado por padrao) --------------------
 # Ver plugin_manager.py pro modelo de seguranca antes de habilitar.
 PLUGINS_ENABLED = False
+# Registries (indices de plugins) que "python plugin_manager.py search"
+# consulta -- URL http(s) ou caminho de arquivo local, cada um um JSON com
+# lista de {name, description, author_id, manifest_url, tags}. Vazio por
+# padrao: nao existe um registry "oficial" centralizado desse projeto (e
+# pessoal/local) -- so pesquisa registries que VOCE adicionou aqui, igual
+# TRUSTED_AUTHORS em plugins/trusted_authors.json. Ver plugins_registry.example.json.
+PLUGIN_REGISTRY_URLS = []
 
 # ── Human-in-the-Loop — permissão em camadas por risco (opcional) ──────────
 # read: só lê. write: muda estado local (reversível). destructive: efeito

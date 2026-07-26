@@ -58,6 +58,17 @@ Uso (manual, no terminal — nunca chamado pelo agente):
     python plugin_manager.py untrust <author_id>
     python plugin_manager.py trusted
 
+Descoberta (marketplace) — NÃO existe um registry central "oficial" desse
+projeto (é pessoal/local). PLUGIN_REGISTRY_URLS em config.py é uma lista
+vazia por padrão — você adiciona URL(s) http(s) ou caminho(s) de arquivo
+local que confia (o formato de cada registry está em
+plugins_registry.example.json). "search"/"registry-list" só LISTAM, nunca
+instalam nada sozinhos — o modelo de segurança acima (hash + assinatura +
+aprovação manual) continua idêntico depois de achar um manifest_url:
+
+    python plugin_manager.py search <termo>
+    python plugin_manager.py registry-list [url_ou_caminho]   # todos configurados se omitido
+
 Formato do manifest (JSON, hospedado pelo autor do plugin):
     {
       "name": "meu_plugin",
@@ -200,6 +211,68 @@ def _safe_name(name: str) -> str:
     if not safe:
         raise PluginError("nome de plugin inválido")
     return safe
+
+
+# ---------------------------------------------------------------------------
+# Descoberta (marketplace) — registry é só um índice JSON (nome/descrição/
+# manifest_url/tags), listado ou pesquisado. NUNCA instala nada sozinho —
+# achar um manifest_url aqui não pula hash nem assinatura, só poupa o
+# operador de já saber a URL do manifest de cor.
+# ---------------------------------------------------------------------------
+REQUIRED_REGISTRY_ENTRY_FIELDS = {"name", "description", "manifest_url"}
+
+
+def fetch_registry(registry_url: str) -> list[dict]:
+    """Busca um índice de plugins de uma URL http(s) ou caminho de arquivo
+    local. Entrada inválida/incompleta é pulada com aviso (não derruba o
+    registry inteiro por causa de UM item malformado)."""
+    if registry_url.startswith("http://") or registry_url.startswith("https://"):
+        import requests
+        r = requests.get(registry_url, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+    else:
+        with open(registry_url, encoding="utf-8") as f:
+            data = json.load(f)
+
+    if not isinstance(data, list):
+        raise PluginError(f"registry '{registry_url}' mal formado — esperava uma lista de plugins")
+
+    valid = []
+    for entry in data:
+        if not isinstance(entry, dict) or REQUIRED_REGISTRY_ENTRY_FIELDS - entry.keys():
+            log.warning("fetch_registry: entrada inválida em '%s', pulando: %r", registry_url, entry)
+            continue
+        valid.append(entry)
+    return valid
+
+
+def search_registries(query: str, registry_urls: list[str] | None = None) -> list[dict]:
+    """Pesquisa por nome/descrição/tags em todos os registries configurados
+    (config.PLUGIN_REGISTRY_URLS, ou os passados explicitamente). Registry
+    fora do ar ou malformado é pulado com aviso, não derruba a busca inteira
+    nos outros registries configurados."""
+    if registry_urls is None:
+        from config import PLUGIN_REGISTRY_URLS
+        registry_urls = PLUGIN_REGISTRY_URLS
+
+    query_l = query.lower().strip()
+    results = []
+    for url in registry_urls:
+        try:
+            entries = fetch_registry(url)
+        except Exception as e:
+            log.warning("search_registries: registry '%s' indisponível (%s), pulando", url, e)
+            continue
+        for entry in entries:
+            haystack = " ".join([
+                str(entry.get("name", "")),
+                str(entry.get("description", "")),
+                " ".join(str(t) for t in entry.get("tags", [])),
+            ]).lower()
+            if not query_l or query_l in haystack:
+                results.append({**entry, "_registry": url})
+    return results
 
 
 def fetch_manifest(manifest_url: str) -> dict:
@@ -349,6 +422,19 @@ if __name__ == "__main__":
                 print("Nenhum autor confiado.")
             for t in trusted:
                 print(f"  {t['author_id']} — {t['pubkey'][:16]}...")
+        elif cmd == "search" and len(sys.argv) == 3:
+            hits = search_registries(sys.argv[2])
+            if not hits:
+                print("Nada encontrado (ou nenhum registry em PLUGIN_REGISTRY_URLS ainda).")
+            for h in hits:
+                print(f"  {h['name']} — {h['description']}  [{h['manifest_url']}]")
+        elif cmd == "registry-list":
+            urls = [sys.argv[2]] if len(sys.argv) == 3 else None
+            hits = search_registries("", registry_urls=urls)
+            if not hits:
+                print("Nenhum plugin listado (ou nenhum registry configurado).")
+            for h in hits:
+                print(f"  {h['name']} — {h['description']}  [{h['manifest_url']}]")
         else:
             print(__doc__)
             sys.exit(1)
