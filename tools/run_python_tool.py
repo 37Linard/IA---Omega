@@ -10,6 +10,8 @@ import tempfile
 import threading
 import time
 
+from tools import _winsandbox
+
 _PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKSPACE_DIR   = os.path.join(_PROJECT, "workspace")
 SANDBOX_IMAGE   = "ia-sandbox:latest"
@@ -251,40 +253,63 @@ def _run_in_docker(code: str, image: str) -> tuple[str, int, float]:
 
 
 # ---------------------------------------------------------------------------
-# Fallback local
+# Fallback local — só roda quando nem WASM nem Docker estão disponíveis
 # ---------------------------------------------------------------------------
-def _run_local(code: str) -> tuple[str, int, float]:
+def _run_local(code: str) -> tuple[str, int, float, bool]:
+    """Retorna (output, exit_code, elapsed_s, sandboxed). `sandboxed=True`
+    quando o Job Object do Windows conseguiu aplicar teto de memória/processos
+    (ver _winsandbox.py) — nunca dá isolamento de rede/filesystem como
+    Docker/WASM, mas impede o caso extremo (memory bomb derrubando o host,
+    fork bomb sobrevivendo ao timeout)."""
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".py", delete=False, encoding="utf-8"
     ) as tmp:
         tmp.write(code)
         tmp_path = tmp.name
 
+    cmd = [sys.executable, tmp_path]
     t0 = time.monotonic()
     try:
-        result = subprocess.run(
-            [sys.executable, tmp_path],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            cwd=WORKSPACE_DIR,
-            encoding="utf-8",
-            errors="replace",
-        )
+        sandboxed = False
+        timed_out = False
+        if _winsandbox.available():
+            try:
+                returncode, stdout, stderr, timed_out = _winsandbox.run_capped(
+                    cmd, cwd=WORKSPACE_DIR, timeout_s=15,
+                    mem_limit_bytes=WASM_MEM_LIMIT,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, encoding="utf-8", errors="replace",
+                )
+                sandboxed = True
+            except OSError:
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=15,
+                    cwd=WORKSPACE_DIR, encoding="utf-8", errors="replace",
+                )
+                returncode, stdout, stderr = result.returncode, result.stdout, result.stderr
+        else:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=15,
+                cwd=WORKSPACE_DIR, encoding="utf-8", errors="replace",
+            )
+            returncode, stdout, stderr = result.returncode, result.stdout, result.stderr
+
         elapsed = round(time.monotonic() - t0, 2)
+        if timed_out:
+            return "Erro: execucao excedeu 15 segundos.", 1, elapsed, sandboxed
         parts = []
-        if result.stdout.strip():
-            parts.append(f"STDOUT:\n{result.stdout.strip()}")
-        if result.stderr.strip():
-            parts.append(f"STDERR:\n{result.stderr.strip()}")
+        if stdout.strip():
+            parts.append(f"STDOUT:\n{stdout.strip()}")
+        if stderr.strip():
+            parts.append(f"STDERR:\n{stderr.strip()}")
         output = "\n".join(parts) if parts else "Codigo executado sem saida."
         if len(output) > MAX_OUTPUT:
             output = output[:MAX_OUTPUT] + "\n[... saida truncada ...]"
-        return output, result.returncode, elapsed
+        return output, returncode, elapsed, sandboxed
     except subprocess.TimeoutExpired:
-        return "Erro: execucao excedeu 15 segundos.", 1, 15.0
+        return "Erro: execucao excedeu 15 segundos.", 1, 15.0, False
     except Exception as e:
-        return f"Erro: {e}", 1, 0.0
+        return f"Erro: {e}", 1, 0.0, False
     finally:
         try:
             os.unlink(tmp_path)
@@ -338,10 +363,17 @@ class RunPythonTool:
             except subprocess.TimeoutExpired:
                 return f"[sandbox: {image}]\nErro: execucao excedeu {DOCKER_TIMEOUT}s."
             except Exception as e:
-                output, exit_code, elapsed = _run_local(code)
-                return f"[Docker falhou ({e}) — fallback local | {elapsed}s | exit={exit_code}]\n[AVISO: execucao no host sem isolamento]\n{output}"
+                output, exit_code, elapsed, sandboxed = _run_local(code)
+                tag = "Job Object (memoria/processos limitados)" if sandboxed else "sem isolamento"
+                return f"[Docker falhou ({e}) — fallback local, {tag} | {elapsed}s | exit={exit_code}]\n{output}"
         else:
-            output, exit_code, elapsed = _run_local(code)
+            output, exit_code, elapsed, sandboxed = _run_local(code)
+            if sandboxed:
+                return (
+                    f"[local: sem Docker, Job Object (memoria/processos limitados) | {elapsed}s | exit={exit_code}]\n"
+                    f"[AVISO: sem isolamento de rede/filesystem — so teto de memoria/processos]\n"
+                    f"{output}"
+                )
             return (
                 f"[local: sem Docker | {elapsed}s | exit={exit_code}]\n"
                 f"[AVISO: Docker nao disponivel — execucao direta no host, sem isolamento]\n"
