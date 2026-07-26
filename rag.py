@@ -13,7 +13,9 @@ BM25_CACHE    = os.path.join(os.path.dirname(__file__), "workspace", "bm25_cache
 CHUNK_SIZE    = 500
 CHUNK_OVERLAP = 100
 SUPPORTED_EXT = {".pdf", ".txt", ".md", ".docx"}
-BM25_ALPHA    = 0.65  # peso para busca semântica (1-α para BM25)
+BM25_ALPHA    = 0.65  # peso para busca semântica (1-α para BM25) — usado só pra gerar candidatos, ver RERANK_MODEL
+RERANK_MODEL           = "Xenova/ms-marco-MiniLM-L-6-v2"  # ONNX via fastembed, ~80MB, sem torch/GPU
+RERANK_CANDIDATES_MULT = 4  # hibrido semantico+BM25 gera n*isso candidatos antes do cross-encoder cortar pra n
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +92,36 @@ class _BM25Store:
             return []
         indexed = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)[:n]
         return [(self.corpus[i], self.meta[i], float(s / max_s)) for i, s in indexed if s > 0]
+
+
+# ---------------------------------------------------------------------------
+# Re-rank — cross-encoder (fastembed/ONNX, já é dependência do embedder de
+# fallback, sem torch novo) sobre os candidatos do retrieval híbrido
+# (semântico+BM25). Antes disso o mix fixo BM25_ALPHA=0.65/0.35 ERA o
+# ranking final; agora vira só gerador de candidatos, cross-encoder decide
+# a ordem de verdade (mais preciso: score conjunto query+doc, não dois
+# scores calculados separado e combinados por peso arbitrário).
+# ---------------------------------------------------------------------------
+_reranker        = None
+_reranker_failed = False
+
+
+def _get_reranker():
+    """Lazy singleton — carrega o modelo ONNX uma vez (~1-2s + download na
+    1ª vez) e cacheia. Se falhar (sem internet pra baixar o modelo, etc.),
+    marca falho pra não tentar de novo a cada busca e degrada pro mix
+    híbrido antigo — mesma filosofia de fallback gracioso do resto do RAG."""
+    global _reranker, _reranker_failed
+    if _reranker is not None or _reranker_failed:
+        return _reranker
+    try:
+        from fastembed.rerank.cross_encoder import TextCrossEncoder
+        _reranker = TextCrossEncoder(model_name=RERANK_MODEL)
+        log.info("RAG: re-rank cross-encoder OK (%s)", RERANK_MODEL)
+    except Exception as e:
+        _reranker_failed = True
+        log.warning("RAG: cross-encoder indisponível — mantendo mix híbrido semântico/BM25. %s", e)
+    return _reranker
 
 
 # ---------------------------------------------------------------------------
@@ -215,15 +247,19 @@ class RAGIndex:
 
     # ------------------------------------------------------------------
     def search(self, query: str, n: int = 5, file_filter: str | None = None) -> list[dict]:
-        """Busca híbrida: semântica (LanceDB) + palavras-chave (BM25).
-        Se o índice semântico estiver indisponível, degrada pra BM25-only
-        em vez de retornar vazio."""
+        """Retrieval em 2 estágios: híbrido semântico (LanceDB) + BM25 gera
+        candidatos (recall amplo, barato), cross-encoder re-ordena pra valer
+        (precisão, score conjunto query+doc). Se o índice semântico ou o
+        cross-encoder estiverem indisponíveis, degrada em cascata: sem
+        semântico vira BM25-only; sem cross-encoder mantém o mix híbrido
+        fixo de antes como ranking final — nunca retorna vazio à toa."""
+        candidate_n   = max(n, n * RERANK_CANDIDATES_MULT)
         semantic_map: dict[str, dict] = {}
 
         if self._ok:
             total = self._collection.count()
             if total > 0:
-                k = min(n * 2, total)
+                k = min(candidate_n, total)
                 try:
                     vec = self._embed_fn([query])[0]
                     hits = self._collection.query(vec, k, file=file_filter)
@@ -241,10 +277,8 @@ class RAGIndex:
                 except Exception as e:
                     log.warning("RAG.search semantic: %s", e)
 
-        k = n * 2
-
         # ── BM25 search ──
-        for text, meta, bm25_score in self._bm25.search(query, n=k):
+        for text, meta, bm25_score in self._bm25.search(query, n=candidate_n):
             if file_filter and meta.get("file") != file_filter:
                 continue
             if text in semantic_map:
@@ -258,14 +292,26 @@ class RAGIndex:
                     "bm25": bm25_score,
                 }
 
-        # ── Hybrid score ──
+        # ── Hybrid score — gera os candidatos pro re-rank (ou é o ranking
+        # final direto, se o cross-encoder estiver indisponível) ──
         combined = []
         for item in semantic_map.values():
             item["score"] = round(BM25_ALPHA * item["semantic"] + (1 - BM25_ALPHA) * item["bm25"], 3)
             combined.append(item)
-
         combined.sort(key=lambda x: x["score"], reverse=True)
-        return [{"text": r["text"], "file": r["file"], "page": r["page"], "score": r["score"]} for r in combined[:n]]
+        candidates = combined[:candidate_n]
+
+        reranker = _get_reranker()
+        if reranker is not None and candidates:
+            try:
+                scores = list(reranker.rerank(query, [c["text"] for c in candidates]))
+                for c, s in zip(candidates, scores):
+                    c["score"] = round(float(s), 4)
+                candidates.sort(key=lambda x: x["score"], reverse=True)
+            except Exception as e:
+                log.warning("RAG.search rerank: %s", e)
+
+        return [{"text": r["text"], "file": r["file"], "page": r["page"], "score": r["score"]} for r in candidates[:n]]
 
     # ------------------------------------------------------------------
     def index_txt(self, path: str) -> dict:
