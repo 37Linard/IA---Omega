@@ -820,291 +820,294 @@ class ReActAgent:
         self._tool_calls = 0
         self._reflection_candidates = []   # [(score, answer, model), ...] — self-consistency (ensemble/voto)
         self._primary_llm = self.llm       # modelo principal da sessão — self.llm pode trocar durante o ensemble, isso nunca muda
-        log.info("TAREFA: %s", task)
+        try:
+            log.info("TAREFA: %s", task)
 
-        self.profile.observe_message(task)
-        self.profile.increment_interactions()
+            self.profile.observe_message(task)
+            self.profile.increment_interactions()
 
-        def emit(data: dict):
-            if step_callback:
-                step_callback(data)
+            def emit(data: dict):
+                if step_callback:
+                    step_callback(data)
 
-        self._emit = emit  # expõe para _hitl_gate
+            self._emit = emit  # expõe para _hitl_gate
 
-        # ── Modo conversa: bypass total do ReAct ───────────────────────
-        if self._is_conversational(task):
-            log.info("MODO CONVERSA: %s", task[:60])
-            result = self._run_conversational(task, emit)
-            emit({"type": "done", "content": ""})
-            self.conversation = self.conversation[-4:]
-            self.conversation.append({"task": task, "result": result[:400]})
-            return result
+            # ── Modo conversa: bypass total do ReAct ───────────────────────
+            if self._is_conversational(task):
+                log.info("MODO CONVERSA: %s", task[:60])
+                result = self._run_conversational(task, emit)
+                emit({"type": "done", "content": ""})
+                self.conversation = self.conversation[-4:]
+                self.conversation.append({"task": task, "result": result[:400]})
+                return result
 
-        # Tarefa composta → Plan-then-Execute (com plano persistido em disco —
-        # se o processo cair no meio, o próximo run() com a mesma tarefa retoma
-        # do passo onde parou em vez de recomeçar do zero)
-        if self._is_compound(task):
-            pending = self._find_resumable_plan(task)
-            if pending:
-                plan_id, steps, context, start_index = (
-                    pending["id"], pending["steps"], pending["context"], pending["current_index"]
+            # Tarefa composta → Plan-then-Execute (com plano persistido em disco —
+            # se o processo cair no meio, o próximo run() com a mesma tarefa retoma
+            # do passo onde parou em vez de recomeçar do zero)
+            if self._is_compound(task):
+                pending = self._find_resumable_plan(task)
+                if pending:
+                    plan_id, steps, context, start_index = (
+                        pending["id"], pending["steps"], pending["context"], pending["current_index"]
+                    )
+                    emit({"type": "step", "content":
+                          f"Plano incompleto encontrado — retomando do passo {start_index+1}/{len(steps)}"})
+                else:
+                    emit({"type": "step", "content": "Tarefa composta detectada — criando plano..."})
+                    steps = self._plan(task, emit)
+                    emit({"type": "thought", "content": f"Plano criado:\n" + "\n".join(f"{i+1}. {s}" for i, s in enumerate(steps))})
+                    plan_id     = plan_store.new_id()
+                    context     = {"tarefa_original": task}
+                    start_index = 0
+                    plan_store.save(plan_id, task, steps, context, current_index=0, session_id=self.session_id)
+
+                results = [context.get(f"passo_{i+1}", "") for i in range(start_index)]
+                for i in range(start_index, len(steps)):
+                    if self._cancel.is_set():
+                        emit({"type": "error", "content": self._cancel_message()})
+                        emit({"type": "done", "content": ""})
+                        plan_store.finish(plan_id)
+                        return "Cancelado."
+                    result = self._run_step(steps[i], context, emit, i + 1, len(steps))
+                    context[f"passo_{i+1}"] = result
+                    results.append(result)
+                    plan_store.update_progress(plan_id, i + 1, context)
+
+                final = f"Tarefa concluída em {len(steps)} passos:\n" + "\n".join(
+                    f"{i+1}. {r[:150]}" for i, r in enumerate(results)
                 )
-                emit({"type": "step", "content":
-                      f"Plano incompleto encontrado — retomando do passo {start_index+1}/{len(steps)}"})
-            else:
-                emit({"type": "step", "content": "Tarefa composta detectada — criando plano..."})
-                steps = self._plan(task, emit)
-                emit({"type": "thought", "content": f"Plano criado:\n" + "\n".join(f"{i+1}. {s}" for i, s in enumerate(steps))})
-                plan_id     = plan_store.new_id()
-                context     = {"tarefa_original": task}
-                start_index = 0
-                plan_store.save(plan_id, task, steps, context, current_index=0, session_id=self.session_id)
+                emit({"type": "final", "content": final})
+                emit({"type": "done", "content": ""})
+                plan_store.finish(plan_id)
+                self.memory.save_session_with_llm(task, final[:200], results, self.llm, self.session_id)
+                self.conversation = self.conversation[-4:]
+                self.conversation.append({"task": task, "result": final[:400]})
+                return final
 
-            results = [context.get(f"passo_{i+1}", "") for i in range(start_index)]
-            for i in range(start_index, len(steps)):
+            last_action_key    = None
+            loop_count         = 0
+            last_observation   = None   # última observação real recebida
+            self.scratchpad    = []
+            _tool_retry_counts: dict[str, int] = {}
+
+            # Injeta dica de ferramenta no step 0 baseado em padrões da tarefa
+            _tool_hint = self._detect_tool_hint(task)
+            if _tool_hint:
+                self.scratchpad.append(_tool_hint)
+
+            for step in range(max_steps):
                 if self._cancel.is_set():
                     emit({"type": "error", "content": self._cancel_message()})
                     emit({"type": "done", "content": ""})
-                    plan_store.finish(plan_id)
                     return "Cancelado."
-                result = self._run_step(steps[i], context, emit, i + 1, len(steps))
-                context[f"passo_{i+1}"] = result
-                results.append(result)
-                plan_store.update_progress(plan_id, i + 1, context)
 
-            final = f"Tarefa concluída em {len(steps)} passos:\n" + "\n".join(
-                f"{i+1}. {r[:150]}" for i, r in enumerate(results)
-            )
-            emit({"type": "final", "content": final})
-            emit({"type": "done", "content": ""})
-            plan_store.finish(plan_id)
-            self.memory.save_session_with_llm(task, final[:200], results, self.llm, self.session_id)
-            self.conversation = self.conversation[-4:]
-            self.conversation.append({"task": task, "result": final[:400]})
-            return final
+                log.info("STEP %d/%d", step + 1, max_steps)
+                emit({"type": "step", "content": f"Step {step + 1}/{max_steps}"})
 
-        last_action_key    = None
-        loop_count         = 0
-        last_observation   = None   # última observação real recebida
-        self.scratchpad    = []
-        _tool_retry_counts: dict[str, int] = {}
+                self._compress_scratchpad()
+                prompt = self._build_prompt(task)
 
-        # Injeta dica de ferramenta no step 0 baseado em padrões da tarefa
-        _tool_hint = self._detect_tool_hint(task)
-        if _tool_hint:
-            self.scratchpad.append(_tool_hint)
+                # Streaming — roteia tokens: thought bubble ou final box
+                emit({"type": "token_start", "content": ""})
+                if step_callback:
+                    _cb, _fs, _as = self._make_streaming_cb(emit)
+                else:
+                    _cb, _fs, _as = None, [False], [False]
+                response = self.llm.generate(prompt, on_token=_cb)
+                if _fs[0]:
+                    emit({"type": "final_stream_end", "content": ""})
+                elif _as[0]:
+                    emit({"type": "action_stream_end", "content": ""})
+                else:
+                    emit({"type": "token_end", "content": ""})
 
-        for step in range(max_steps):
-            if self._cancel.is_set():
-                emit({"type": "error", "content": self._cancel_message()})
-                emit({"type": "done", "content": ""})
-                return "Cancelado."
+                # Remove observações inventadas e steps extras alucinados
+                clean_response = re.split(r'\n\s*Observa[cç][aã]o:', response)[0].strip()
+                # Mantém apenas o primeiro bloco Thought+Action+Input (trunca na 2Âª ocorrência de Thought:)
+                _parts = re.split(r'\n(?=Thought:)', clean_response)
+                if len(_parts) > 1:
+                    clean_response = _parts[0].strip()
 
-            log.info("STEP %d/%d", step + 1, max_steps)
-            emit({"type": "step", "content": f"Step {step + 1}/{max_steps}"})
+                print(clean_response)
+                self.scratchpad.append(clean_response)
 
-            self._compress_scratchpad()
-            prompt = self._build_prompt(task)
-
-            # Streaming — roteia tokens: thought bubble ou final box
-            emit({"type": "token_start", "content": ""})
-            if step_callback:
-                _cb, _fs, _as = self._make_streaming_cb(emit)
-            else:
-                _cb, _fs, _as = None, [False], [False]
-            response = self.llm.generate(prompt, on_token=_cb)
-            if _fs[0]:
-                emit({"type": "final_stream_end", "content": ""})
-            elif _as[0]:
-                emit({"type": "action_stream_end", "content": ""})
-            else:
-                emit({"type": "token_end", "content": ""})
-
-            # Remove observações inventadas e steps extras alucinados
-            clean_response = re.split(r'\n\s*Observa[cç][aã]o:', response)[0].strip()
-            # Mantém apenas o primeiro bloco Thought+Action+Input (trunca na 2Âª ocorrência de Thought:)
-            _parts = re.split(r'\n(?=Thought:)', clean_response)
-            if len(_parts) > 1:
-                clean_response = _parts[0].strip()
-
-            print(clean_response)
-            self.scratchpad.append(clean_response)
-
-            try:
-                action, action_input = self._parse_response(clean_response)
-            except ValueError as e:
-                err_msg = str(e)
-                log.warning("PARSER: %s", err_msg)
-                self._log_error(task, "parser_error", err_msg)
-                emit({"type": "error", "content": f"Formato inválido: {err_msg}"})
-                tools_list = list(self.tools.keys())
-                correction = (
-                    f"Thought: Erro no meu formato anterior: {err_msg}\n"
-                    f"Devo usar EXATAMENTE este formato:\n"
-                    f"Thought: [meu raciocínio]\n"
-                    f"Action: [uma dessas: {tools_list}]\n"
-                    'Action Input: {"chave": "valor"}\n'
-                    f"Vou tentar novamente corretamente.\n"
-                )
-                self.scratchpad.append(correction)
-                continue
-
-            # Detecta loop — mesma action+input repetida
-            action_key = f"{action}::{json.dumps(action_input, sort_keys=True)}"
-            if action_key == last_action_key:
-                loop_count += 1
-                if loop_count >= 2:
-                    emit({"type": "error", "content": f"Loop detectado em '{action}'. Forçando conclusão."})
-                    # Se já tem observação, usa ela como Final Answer direto
-                    if last_observation:
-                        log.info("LOOP: forçando Final Answer com última observação")
-                        forced = f"Com base nos dados coletados:\n\n{last_observation}"
-                        emit({"type": "final", "content": forced})
-                        self.memory.save_session_with_llm(task, forced[:200], self.scratchpad, self.llm, self.session_id)
-                        self.conversation = self.conversation[-4:]
-                        self.conversation.append({"task": task, "result": forced[:400]})
-                        return forced
-                    # Sem observação — injeta instrução forte de troca de ferramenta
-                    self.scratchpad.append(
-                        f"Thought: Loop em '{action}' — esta ferramenta não está funcionando para esta tarefa. "
-                        f"DEVO usar outra ferramenta diferente ou escrever Final Answer agora.\n"
+                try:
+                    action, action_input = self._parse_response(clean_response)
+                except ValueError as e:
+                    err_msg = str(e)
+                    log.warning("PARSER: %s", err_msg)
+                    self._log_error(task, "parser_error", err_msg)
+                    emit({"type": "error", "content": f"Formato inválido: {err_msg}"})
+                    tools_list = list(self.tools.keys())
+                    correction = (
+                        f"Thought: Erro no meu formato anterior: {err_msg}\n"
+                        f"Devo usar EXATAMENTE este formato:\n"
+                        f"Thought: [meu raciocínio]\n"
+                        f"Action: [uma dessas: {tools_list}]\n"
+                        'Action Input: {"chave": "valor"}\n'
+                        f"Vou tentar novamente corretamente.\n"
                     )
-                    loop_count = 0
-                    last_action_key = None
+                    self.scratchpad.append(correction)
                     continue
-            else:
-                loop_count = 0
-            last_action_key = action_key
 
-            if action == "Final Answer":
-                log.info("RESPOSTA FINAL: %s", action_input[:200])
-
-                # Modelos pequenos as vezes nao copiam o link de imagem da Observation
-                # pra Final Answer — forca a inclusao pra imagem aparecer no chat
-                if last_observation:
-                    img_match = re.search(r'!\[[^\]]*\]\([^)]+\)', last_observation)
-                    if img_match and img_match.group(0) not in action_input:
-                        action_input = action_input.rstrip() + "\n\n" + img_match.group(0)
-
-                # Reflection / self-consistency — critica antes de aceitar. Se a
-                # tentativa for fraca, coleta até SELF_CONSISTENCY_MAX_ATTEMPTS
-                # candidatos e VOTA entre eles (julgamento holístico, vendo todos
-                # juntos) em vez de só comparar scores calculados isoladamente
-                # um contra o outro (ruidoso — o critic pode calibrar diferente
-                # entre chamadas separadas) ou aceitar a reescrita mais recente
-                # às cegas.
-                force_final_emit = False
-
-                if REFLECTION_ENABLED:
-                    score, hint, issues = self._reflect(task, action_input)
-                    if not self._reflection_candidates:
-                        tracing.record_reflection(score, REFLECTION_THRESHOLD, score >= REFLECTION_THRESHOLD)
-                    rc = f"Score {score}/5"
-                    if issues:
-                        rc += " — " + "; ".join(issues[:2])
-                    emit({
-                        "type":     "reflection",
-                        "content":  rc,
-                        "score":    score,
-                        "accepted": score >= REFLECTION_THRESHOLD,
-                    })
-                    log.info("REFLECTION: score=%d hint=%s", score, hint[:80] if hint else "")
-
-                    self._reflection_candidates.append((score, action_input, self.llm.model))
-                    can_retry = len(self._reflection_candidates) < SELF_CONSISTENCY_MAX_ATTEMPTS
-
-                    if score < REFLECTION_THRESHOLD and can_retry:
-                        # Streaming já emitiu tokens — reseta conteúdo no frontend
-                        if _fs[0]:
-                            emit({"type": "reset_content", "content": ""})
-                        retry_hint = (
-                            f"Thought: Minha resposta foi avaliada com score {score}/5 (minimo={REFLECTION_THRESHOLD}).\n"
-                            + (f"Problemas: {'; '.join(issues)}\n" if issues else "")
-                            + (f"Como melhorar: {hint}\n" if hint else "")
-                            + "Vou reescrever a Final Answer de forma mais completa e precisa.\n"
+                # Detecta loop — mesma action+input repetida
+                action_key = f"{action}::{json.dumps(action_input, sort_keys=True)}"
+                if action_key == last_action_key:
+                    loop_count += 1
+                    if loop_count >= 2:
+                        emit({"type": "error", "content": f"Loop detectado em '{action}'. Forçando conclusão."})
+                        # Se já tem observação, usa ela como Final Answer direto
+                        if last_observation:
+                            log.info("LOOP: forçando Final Answer com última observação")
+                            forced = f"Com base nos dados coletados:\n\n{last_observation}"
+                            emit({"type": "final", "content": forced})
+                            self.memory.save_session_with_llm(task, forced[:200], self.scratchpad, self.llm, self.session_id)
+                            self.conversation = self.conversation[-4:]
+                            self.conversation.append({"task": task, "result": forced[:400]})
+                            return forced
+                        # Sem observação — injeta instrução forte de troca de ferramenta
+                        self.scratchpad.append(
+                            f"Thought: Loop em '{action}' — esta ferramenta não está funcionando para esta tarefa. "
+                            f"DEVO usar outra ferramenta diferente ou escrever Final Answer agora.\n"
                         )
-                        self.scratchpad.append(retry_hint)
-                        next_model = ENSEMBLE_MODELS[len(self._reflection_candidates) % len(ENSEMBLE_MODELS)]
-                        self.llm = OllamaLLM(model=next_model)
-                        log.info("REFLECTION: reescrevendo resposta (tentativa %d/%d) com modelo '%s'...",
-                                  len(self._reflection_candidates) + 1, SELF_CONSISTENCY_MAX_ATTEMPTS, next_model)
+                        loop_count = 0
+                        last_action_key = None
                         continue
+                else:
+                    loop_count = 0
+                last_action_key = action_key
 
-                    self.llm = self._primary_llm  # restaura o principal antes do voto e de qualquer turno seguinte
-                    if len(self._reflection_candidates) > 1:
-                        winner_idx = self._vote_best_answer(task, self._reflection_candidates)
-                        winner_score, winner_answer, _winner_model = self._reflection_candidates[winner_idx]
+                if action == "Final Answer":
+                    log.info("RESPOSTA FINAL: %s", action_input[:200])
+
+                    # Modelos pequenos as vezes nao copiam o link de imagem da Observation
+                    # pra Final Answer — forca a inclusao pra imagem aparecer no chat
+                    if last_observation:
+                        img_match = re.search(r'!\[[^\]]*\]\([^)]+\)', last_observation)
+                        if img_match and img_match.group(0) not in action_input:
+                            action_input = action_input.rstrip() + "\n\n" + img_match.group(0)
+
+                    # Reflection / self-consistency — critica antes de aceitar. Se a
+                    # tentativa for fraca, coleta até SELF_CONSISTENCY_MAX_ATTEMPTS
+                    # candidatos e VOTA entre eles (julgamento holístico, vendo todos
+                    # juntos) em vez de só comparar scores calculados isoladamente
+                    # um contra o outro (ruidoso — o critic pode calibrar diferente
+                    # entre chamadas separadas) ou aceitar a reescrita mais recente
+                    # às cegas.
+                    force_final_emit = False
+
+                    if REFLECTION_ENABLED:
+                        score, hint, issues = self._reflect(task, action_input)
+                        if not self._reflection_candidates:
+                            tracing.record_reflection(score, REFLECTION_THRESHOLD, score >= REFLECTION_THRESHOLD)
+                        rc = f"Score {score}/5"
+                        if issues:
+                            rc += " — " + "; ".join(issues[:2])
                         emit({
-                            "type":    "reflection",
-                            "content": (
-                                f"Self-consistency: {len(self._reflection_candidates)} tentativas, "
-                                f"voto escolheu a nº{winner_idx + 1} (score {winner_score}/5)"
-                            ),
-                            "score":    winner_score,
-                            "accepted": True,
+                            "type":     "reflection",
+                            "content":  rc,
+                            "score":    score,
+                            "accepted": score >= REFLECTION_THRESHOLD,
                         })
-                        log.info("SELF-CONSISTENCY: %d tentativas -> voto escolheu #%d (score %d)",
-                                  len(self._reflection_candidates), winner_idx, winner_score)
-                        action_input = winner_answer
-                        if winner_idx != len(self._reflection_candidates) - 1:
-                            # o voto ficou com uma tentativa anterior, não a última
-                            # que o frontend acabou de streamar — força reset+reemite
-                            emit({"type": "reset_content", "content": ""})
-                            force_final_emit = True
+                        log.info("REFLECTION: score=%d hint=%s", score, hint[:80] if hint else "")
 
-                action_input = self._guard_final_answer(action_input, emit=emit)
-                if force_final_emit or not _fs[0]:
-                    emit({"type": "final", "content": action_input})
-                self.memory.save_session_with_llm(task, action_input[:200], self.scratchpad, self.llm, self.session_id)
-                self.conversation = self.conversation[-4:]
-                self.conversation.append({"task": task, "result": action_input[:400]})
-                return action_input
+                        self._reflection_candidates.append((score, action_input, self.llm.model))
+                        can_retry = len(self._reflection_candidates) < SELF_CONSISTENCY_MAX_ATTEMPTS
 
-            log.info("EXECUTANDO: %s(%s)", action, action_input)
-            emit({"type": "action", "content": f"{action}({json.dumps(action_input, ensure_ascii=False)})"})
+                        if score < REFLECTION_THRESHOLD and can_retry:
+                            # Streaming já emitiu tokens — reseta conteúdo no frontend
+                            if _fs[0]:
+                                emit({"type": "reset_content", "content": ""})
+                            retry_hint = (
+                                f"Thought: Minha resposta foi avaliada com score {score}/5 (minimo={REFLECTION_THRESHOLD}).\n"
+                                + (f"Problemas: {'; '.join(issues)}\n" if issues else "")
+                                + (f"Como melhorar: {hint}\n" if hint else "")
+                                + "Vou reescrever a Final Answer de forma mais completa e precisa.\n"
+                            )
+                            self.scratchpad.append(retry_hint)
+                            next_model = ENSEMBLE_MODELS[len(self._reflection_candidates) % len(ENSEMBLE_MODELS)]
+                            self.llm = OllamaLLM(model=next_model)
+                            log.info("REFLECTION: reescrevendo resposta (tentativa %d/%d) com modelo '%s'...",
+                                      len(self._reflection_candidates) + 1, SELF_CONSISTENCY_MAX_ATTEMPTS, next_model)
+                            continue
 
-            if action == "generate_image":
-                emit({"type": "thought", "content": "🎨 Gerando imagem — pode levar alguns segundos..."})
-            elif action == "generate_chart":
-                emit({"type": "thought", "content": "📊 Gerando gráfico..."})
+                        self.llm = self._primary_llm  # restaura o principal antes do voto e de qualquer turno seguinte
+                        if len(self._reflection_candidates) > 1:
+                            winner_idx = self._vote_best_answer(task, self._reflection_candidates)
+                            winner_score, winner_answer, _winner_model = self._reflection_candidates[winner_idx]
+                            emit({
+                                "type":    "reflection",
+                                "content": (
+                                    f"Self-consistency: {len(self._reflection_candidates)} tentativas, "
+                                    f"voto escolheu a nº{winner_idx + 1} (score {winner_score}/5)"
+                                ),
+                                "score":    winner_score,
+                                "accepted": True,
+                            })
+                            log.info("SELF-CONSISTENCY: %d tentativas -> voto escolheu #%d (score %d)",
+                                      len(self._reflection_candidates), winner_idx, winner_score)
+                            action_input = winner_answer
+                            if winner_idx != len(self._reflection_candidates) - 1:
+                                # o voto ficou com uma tentativa anterior, não a última
+                                # que o frontend acabou de streamar — força reset+reemite
+                                emit({"type": "reset_content", "content": ""})
+                                force_final_emit = True
 
-            observation = self._execute_tool(action, action_input)
-            log.info("RESULTADO: %s", observation[:300])
-            emit({"type": "observation", "content": observation})
+                    action_input = self._guard_final_answer(action_input, emit=emit)
+                    if force_final_emit or not _fs[0]:
+                        emit({"type": "final", "content": action_input})
+                    self.memory.save_session_with_llm(task, action_input[:200], self.scratchpad, self.llm, self.session_id)
+                    self.conversation = self.conversation[-4:]
+                    self.conversation.append({"task": task, "result": action_input[:400]})
+                    return action_input
 
-            retry_key = f"{action}::{json.dumps(action_input, sort_keys=True)}"
-            if self._is_tool_error(observation):
-                retries = _tool_retry_counts.get(retry_key, 0)
-                if retries < MAX_TOOL_RETRIES:
-                    _tool_retry_counts[retry_key] = retries + 1
-                    emit({"type": "correction", "content": f"Auto-correção {retries + 1}/{MAX_TOOL_RETRIES}: erro em '{action}' — analisando..."})
-                    self.scratchpad.append(
-                        f"Observation: [ERRO — TENTATIVA {retries + 1}/{MAX_TOOL_RETRIES}]\n"
-                        f"{observation}\n"
-                        f"Thought: Erro na ferramenta '{action}'. Vou analisar a causa e tentar uma abordagem diferente."
-                    )
-                    continue
+                log.info("EXECUTANDO: %s(%s)", action, action_input)
+                emit({"type": "action", "content": f"{action}({json.dumps(action_input, ensure_ascii=False)})"})
+
+                if action == "generate_image":
+                    emit({"type": "thought", "content": "🎨 Gerando imagem — pode levar alguns segundos..."})
+                elif action == "generate_chart":
+                    emit({"type": "thought", "content": "📊 Gerando gráfico..."})
+
+                observation = self._execute_tool(action, action_input)
+                log.info("RESULTADO: %s", observation[:300])
+                emit({"type": "observation", "content": observation})
+
+                retry_key = f"{action}::{json.dumps(action_input, sort_keys=True)}"
+                if self._is_tool_error(observation):
+                    retries = _tool_retry_counts.get(retry_key, 0)
+                    if retries < MAX_TOOL_RETRIES:
+                        _tool_retry_counts[retry_key] = retries + 1
+                        emit({"type": "correction", "content": f"Auto-correção {retries + 1}/{MAX_TOOL_RETRIES}: erro em '{action}' — analisando..."})
+                        self.scratchpad.append(
+                            f"Observation: [ERRO — TENTATIVA {retries + 1}/{MAX_TOOL_RETRIES}]\n"
+                            f"{observation}\n"
+                            f"Thought: Erro na ferramenta '{action}'. Vou analisar a causa e tentar uma abordagem diferente."
+                        )
+                        continue
+                    else:
+                        _tool_retry_counts.pop(retry_key, None)
+                        emit({"type": "error", "content": f"Máximo de tentativas ({MAX_TOOL_RETRIES}) atingido para '{action}'."})
+                        self.scratchpad.append(f"Observation: {observation}")
                 else:
                     _tool_retry_counts.pop(retry_key, None)
-                    emit({"type": "error", "content": f"Máximo de tentativas ({MAX_TOOL_RETRIES}) atingido para '{action}'."})
+                    last_observation = observation
                     self.scratchpad.append(f"Observation: {observation}")
-            else:
-                _tool_retry_counts.pop(retry_key, None)
-                last_observation = observation
-                self.scratchpad.append(f"Observation: {observation}")
 
-                # generate_image/generate_chart sao terminais — o entregavel eh o link da
-                # imagem, nao ha o que o LLM acrescente. Curto-circuita aqui pra evitar
-                # que o modelo pequeno repita a mesma chamada varias vezes (visto em teste)
-                if action in ("generate_image", "generate_chart") and re.search(r'!\[[^\]]*\]\([^)]+\)', observation):
-                    log.info("RESPOSTA FINAL (curto-circuito %s): %s", action, observation[:200])
-                    emit({"type": "final", "content": observation})
-                    self.memory.save_session_with_llm(task, observation[:200], self.scratchpad, self.llm, self.session_id)
-                    self.conversation = self.conversation[-4:]
-                    self.conversation.append({"task": task, "result": observation[:400]})
-                    return observation
+                    # generate_image/generate_chart sao terminais — o entregavel eh o link da
+                    # imagem, nao ha o que o LLM acrescente. Curto-circuita aqui pra evitar
+                    # que o modelo pequeno repita a mesma chamada varias vezes (visto em teste)
+                    if action in ("generate_image", "generate_chart") and re.search(r'!\[[^\]]*\]\([^)]+\)', observation):
+                        log.info("RESPOSTA FINAL (curto-circuito %s): %s", action, observation[:200])
+                        emit({"type": "final", "content": observation})
+                        self.memory.save_session_with_llm(task, observation[:200], self.scratchpad, self.llm, self.session_id)
+                        self.conversation = self.conversation[-4:]
+                        self.conversation.append({"task": task, "result": observation[:400]})
+                        return observation
 
-        self._log_error(task, "max_steps", f"Atingiu {max_steps} steps sem Final Answer")
-        emit({"type": "error", "content": "Limite de passos atingido."})
-        return "Limite de passos atingido sem resposta final."
+            self._log_error(task, "max_steps", f"Atingiu {max_steps} steps sem Final Answer")
+            emit({"type": "error", "content": "Limite de passos atingido."})
+            return "Limite de passos atingido sem resposta final."
+        finally:
+            self.llm = self._primary_llm  # nunca deixa o modelo alternativo vazar pro resto da sessao (proximo run() reusa self.llm)
 

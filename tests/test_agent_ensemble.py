@@ -45,6 +45,21 @@ class _ScriptedLLM:
         return resp
 
 
+class _CancelAfterN:
+    """Fake threading.Event: is_set() fica False pelas primeiras `n` chamadas,
+    True dai em diante. Simula um cancelamento/timeout que chega bem no meio
+    de um retry do self-consistency (2º step do loop), sem precisar de thread
+    real nem sleep."""
+
+    def __init__(self, n):
+        self._calls = 0
+        self._n = n
+
+    def is_set(self):
+        self._calls += 1
+        return self._calls > self._n
+
+
 def _bare_agent(llm):
     a = ReActAgent.__new__(ReActAgent)
     a.llm                = llm
@@ -72,10 +87,11 @@ def test_second_attempt_uses_ensemble_alternate_model(monkeypatch):
     primary_llm = _ScriptedLLM(
         model="primary-model",
         react_responses=["Thought: 1.\nFinal Answer: tentativa 1 (principal)"],
-        reflect_jsons=[
-            '{"score": 2, "issues": [], "hint": ""}',
-            '{"score": 5, "issues": [], "hint": ""}',
-        ],
+        # Só 1 entrada: a 2ª avaliação de reflection (depois da troca de modelo)
+        # roda no alt_llm, não no primary_llm — ver _ScriptedLLM.generate, que
+        # distingue a chamada pelo self.llm ATUAL, não por qual LLM criou o
+        # candidato. Uma 2ª entrada aqui nunca seria consumida (dado morto).
+        reflect_jsons=['{"score": 2, "issues": [], "hint": ""}'],
         vote_responses=["1"],
     )
     alt_llm = _ScriptedLLM(
@@ -97,3 +113,48 @@ def test_second_attempt_uses_ensemble_alternate_model(monkeypatch):
 
     assert constructed_models == ["alt-model"]
     assert result == "tentativa 2 (alternativo)"
+
+
+def test_llm_restored_to_primary_when_cancelled_mid_retry(monkeypatch):
+    """Code-review finding (pos-Task 2): self.llm só era restaurado pro
+    _primary_llm no caminho normal Final Answer -> voto. Mas run() tem outros
+    caminhos de retorno (cancelamento/timeout no topo do loop, curto-circuito
+    de generate_image/generate_chart, limite de steps) que podem disparar
+    DEPOIS que um retry já trocou self.llm pro modelo alternativo. Se
+    qualquer um desses vier antes de outro Final Answer, self.llm ficava
+    vazando o modelo alternativo pro resto da sessão -- e ReActAgent é
+    reusado entre run() (api.py e main.py chamam agent.run() em loop na
+    mesma instância), entao o PRÓXIMO run() prometeria o modelo alternativo a
+    _primary_llm silenciosamente. Este teste força esse cenário: 1ª tentativa
+    (primary) sai fraca -> retry troca pra alt-model -> antes do 2º step
+    conseguir gerar qualquer coisa, um cancelamento chega no topo do loop."""
+    monkeypatch.setattr(agent_mod, "REFLECTION_ENABLED", True)
+    monkeypatch.setattr(agent_mod, "REFLECTION_THRESHOLD", 4)
+    monkeypatch.setattr(agent_mod, "SELF_CONSISTENCY_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(agent_mod, "ENSEMBLE_MODELS", ["primary-model", "alt-model"])
+
+    primary_llm = _ScriptedLLM(
+        model="primary-model",
+        react_responses=["Thought: 1.\nFinal Answer: tentativa 1 (principal)"],
+        reflect_jsons=['{"score": 2, "issues": [], "hint": ""}'],
+    )
+    # alt_llm nunca deveria ser chamado -- o cancelamento bate antes de
+    # qualquer generate() nele. Sem react_responses/reflect_jsons de propósito:
+    # se o código chamasse alt_llm.generate por engano, o teste quebraria com
+    # IndexError em vez de passar silenciosamente.
+    alt_llm = _ScriptedLLM(model="alt-model")
+
+    monkeypatch.setattr(agent_mod, "OllamaLLM", lambda model: alt_llm)
+
+    a = _bare_agent(primary_llm)
+    # False no check do step 0 (deixa rodar Final Answer + reflection + retry);
+    # True no check do step 1 (cancela antes do 2º generate) -- ver Step 897-901
+    # do agent.py, checado no topo de cada iteração do loop ReAct.
+    a._cancel = _CancelAfterN(1)
+
+    result = a.run(TASK, step_callback=None)
+
+    assert result == "Cancelado."
+    assert a.llm is primary_llm
+    assert a.llm.model == "primary-model"
+    assert a.llm is a._primary_llm
