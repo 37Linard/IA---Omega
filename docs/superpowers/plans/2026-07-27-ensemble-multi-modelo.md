@@ -67,6 +67,7 @@ git commit -m "feat: adiciona ENSEMBLE_MODELS pra pool do ensemble multi-modelo"
 - Modify: `agent.py:1013-1026` (troca de modelo antes do retry)
 - Modify: `agent.py:1028-1030` (restaura `self.llm` antes do voto + unpack de 3-tupla)
 - Modify: `agent.py:529-555` (`_vote_best_answer` — unpack de 3-tupla)
+- Modify: `tests/test_self_consistency.py` (mocka `OllamaLLM` nos testes que disparam retry — achado do pre-flight scan, ver Step 11)
 - Test: `tests/test_agent_ensemble.py` (novo)
 
 **Interfaces:**
@@ -307,15 +308,68 @@ Em `agent.py:529-555`, a assinatura e o unpack mudam de `list[tuple[int, str]]` 
 Run: `python -m pytest tests/test_agent_ensemble.py -v`
 Expected: PASS
 
-- [ ] **Step 10: Rodar a suite completa de self-consistency pra checar regressão**
+- [ ] **Step 10: Rodar a suite de self-consistency e confirmar a quebra esperada (achado do pre-flight)**
 
 Run: `python -m pytest tests/test_self_consistency.py -v`
-Expected: PASS em todos (esses testes usam 1 único `_ScriptedLLM`, sem `ENSEMBLE_MODELS` sobrescrito — o índice cíclico vai apontar sempre pro mesmo pool default de 2 itens, mas como esses testes não fazem monkeypatch de `OllamaLLM`, qualquer tentativa de troca real de modelo levantaria erro de import/rede — CONFIRME que nenhum desses testes dispara `score < REFLECTION_THRESHOLD and can_retry` mais de uma vez sem que o teste já mockasse isso. Se algum teste quebrar aqui, é sinal de que a troca de modelo está sendo chamada num caminho que o teste antigo não esperava — ajustar o teste antigo pra também mockar `agent_mod.OllamaLLM`, não o código novo).
+Expected: FAIL em várias — esses testes disparam retry (score abaixo do threshold) sem mockar `OllamaLLM`. Depois do Step 6/7, o retry agora chama `self.llm = OllamaLLM(model=next_model)` de verdade, substituindo o `_ScriptedLLM` do teste por um `OllamaLLM` real — a próxima chamada de `generate()` tentaria rede de verdade e falharia/travaria. Isso é esperado neste ponto; corrigido no próximo step.
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 11: Corrigir `tests/test_self_consistency.py` pra mockar `OllamaLLM` nos testes que disparam retry**
+
+Em `tests/test_self_consistency.py`, adicionar `import agent as agent_mod` já existe no topo do arquivo. Em CADA teste abaixo (todos já recebem `monkeypatch` como parâmetro), adicionar a linha `monkeypatch.setattr(agent_mod, "OllamaLLM", lambda model: llm)` logo depois da construção de `llm = _ScriptedLLM(...)` e antes de `a = _bare_agent(llm)` — isso faz o retry "trocar de modelo" pra o MESMO objeto `_ScriptedLLM` (a troca de modelo em si não é o que esses testes verificam, então reusar o mesmo stub preserva o comportamento scripted original):
+
+- `test_self_consistency_keeps_first_answer_when_vote_picks_it`
+- `test_reflection_recorded_in_tracing_for_dashboard`
+- `test_self_consistency_keeps_second_answer_when_vote_picks_it`
+- `test_vote_overrides_naive_max_score_pick`
+- `test_self_consistency_votes_among_three_independent_attempts`
+- `test_self_consistency_guards_first_answer_against_ignored_tool_error`
+
+Exemplo (primeiro teste do arquivo), muda de:
+
+```python
+    llm = _ScriptedLLM(
+        react_responses=[
+            "Thought: pronto.\nFinal Answer: resposta A",
+            "Thought: reescrevendo.\nFinal Answer: resposta B (reescrita, mas pior)",
+        ],
+        reflect_jsons=[
+            '{"score": 3, "issues": ["faltou contexto"], "hint": "adicione contexto"}',
+            '{"score": 2, "issues": [], "hint": ""}',
+        ],
+        vote_responses=["0"],  # o juiz (holístico) escolhe o índice 0 -- resposta A
+    )
+    a = _bare_agent(llm)
+```
+
+para:
+
+```python
+    llm = _ScriptedLLM(
+        react_responses=[
+            "Thought: pronto.\nFinal Answer: resposta A",
+            "Thought: reescrevendo.\nFinal Answer: resposta B (reescrita, mas pior)",
+        ],
+        reflect_jsons=[
+            '{"score": 3, "issues": ["faltou contexto"], "hint": "adicione contexto"}',
+            '{"score": 2, "issues": [], "hint": ""}',
+        ],
+        vote_responses=["0"],  # o juiz (holístico) escolhe o índice 0 -- resposta A
+    )
+    monkeypatch.setattr(agent_mod, "OllamaLLM", lambda model: llm)
+    a = _bare_agent(llm)
+```
+
+Aplicar o mesmo padrão (adicionar a linha `monkeypatch.setattr(agent_mod, "OllamaLLM", lambda model: llm)` entre a construção de `llm` e a construção de `a`) nos outros 5 testes listados acima. `test_no_retry_when_first_score_already_passes_threshold` NÃO precisa da mudança — score já passa no threshold na 1ª tentativa, `self.llm` nunca é trocado nesse teste.
+
+- [ ] **Step 12: Rodar a suite de self-consistency de novo e confirmar que passa**
+
+Run: `python -m pytest tests/test_self_consistency.py -v`
+Expected: PASS em todos
+
+- [ ] **Step 13: Commit**
 
 ```bash
-git add agent.py tests/test_agent_ensemble.py
+git add agent.py tests/test_agent_ensemble.py tests/test_self_consistency.py
 git commit -m "feat: self-consistency troca de modelo real entre tentativas (ensemble)"
 ```
 
