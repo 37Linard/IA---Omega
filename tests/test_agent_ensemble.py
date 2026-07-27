@@ -211,3 +211,59 @@ def test_reflection_event_includes_model_name(monkeypatch):
     reflection_events = [e for e in events if e["type"] == "reflection"]
     assert len(reflection_events) == 1
     assert reflection_events[0]["model"] == "primary-model"
+
+
+def test_reflection_event_includes_model_name_in_vote_result(monkeypatch):
+    """Valida que o evento de resultado do voto (vote-result emit) inclui o modelo
+    do candidato vencedor, não o modelo atual (que foi restaurado ao primário).
+    Testa a 2ª chamada de emit no bloco de reflection."""
+    monkeypatch.setattr(agent_mod, "REFLECTION_ENABLED", True)
+    monkeypatch.setattr(agent_mod, "REFLECTION_THRESHOLD", 4)  # alto, força retry
+    monkeypatch.setattr(agent_mod, "SELF_CONSISTENCY_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(agent_mod, "ENSEMBLE_MODELS", ["primary-model", "alt-model"])
+
+    primary_llm = _ScriptedLLM(
+        model="primary-model",
+        react_responses=["Thought: tentativa 1.\nFinal Answer: resposta do primary"],
+        # Duas avaliações: 1ª falha (score baixo), 2ª avalia a do alt-model
+        reflect_jsons=[
+            '{"score": 2, "issues": [], "hint": ""}',  # falha, dispara retry
+            '{"score": 5, "issues": [], "hint": ""}',  # avalia a 2ª tentativa
+        ],
+        vote_responses=["1"],  # voto escolhe a 2ª tentativa (índice 1, do alt-model)
+    )
+    alt_llm = _ScriptedLLM(
+        model="alt-model",
+        react_responses=["Thought: tentativa 2.\nFinal Answer: resposta do alt"],
+        reflect_jsons=[],  # não usado (reflection sempre roda no primary)
+    )
+
+    monkeypatch.setattr(agent_mod, "OllamaLLM", lambda model: alt_llm)
+
+    events = []
+    a = _bare_agent(primary_llm)
+    result = a.run(TASK, step_callback=lambda ev: events.append(ev))
+
+    assert result == "resposta do alt"
+
+    reflection_events = [e for e in events if e["type"] == "reflection"]
+    assert len(reflection_events) == 3  # 1ª score + 2ª score + resultado do voto
+
+    # Evento 1: reflexão da 1ª tentativa (score baixo, dispara retry)
+    assert reflection_events[0]["score"] == 2
+    assert reflection_events[0]["model"] == "primary-model"
+    assert reflection_events[0]["accepted"] is False
+
+    # Evento 2: reflexão da 2ª tentativa (score alto, do alt-model)
+    # Neste ponto self.llm ainda é alt-model (restauração acontece depois)
+    assert reflection_events[1]["score"] == 5
+    assert reflection_events[1]["model"] == "alt-model"
+    assert reflection_events[1]["accepted"] is True
+
+    # Evento 3: resultado do voto (vencedor é o alt-model)
+    assert reflection_events[2]["score"] == 5
+    assert "Self-consistency" in reflection_events[2]["content"]
+    # ESTE É O TESTE CRÍTICO: model deve ser alt-model (o do vencedor), NÃO primary-model
+    # (que é o que self.llm seria neste ponto, pós-restauração). Um bug trocando
+    # _winner_model por self.llm.model quebraria este assert.
+    assert reflection_events[2]["model"] == "alt-model"
