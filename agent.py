@@ -14,6 +14,8 @@ if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
 if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 from config import TOOL_TIMEOUT, TOOL_TIMEOUTS, MAX_TOOL_CALLS, MAX_TOOL_RETRIES, MAX_STEPS, REFLECTION_ENABLED, REFLECTION_THRESHOLD, SELF_CONSISTENCY_MAX_ATTEMPTS, HITL_ENABLED, HITL_GATE_TIERS, TOOL_RISK_TIERS, DEFAULT_TOOL_RISK, TASK_TIMEOUT, ALWAYS_HITL_TOOLS
+from config import ENSEMBLE_MODELS
+from llm import OllamaLLM
 import audit
 import tracing
 import circuit_breaker
@@ -526,7 +528,7 @@ class ReActAgent:
             log.debug("_reflect: %s", e)
             return 4, "", []
 
-    def _vote_best_answer(self, task: str, candidates: list[tuple[int, str]]) -> int:
+    def _vote_best_answer(self, task: str, candidates: list[tuple[int, str, str]]) -> int:
         """Vota entre candidatos de Final Answer coletados (self-consistency real:
         N tentativas independentes, não 2 sequenciais). Julgamento holístico — o
         LLM vê todos os candidatos juntos e escolhe — em vez de só comparar
@@ -536,7 +538,7 @@ class ReActAgent:
         o voto falhar/vier malformado."""
         if len(candidates) <= 1:
             return 0
-        options = "\n".join(f"[{i}] {ans[:400]}" for i, (_, ans) in enumerate(candidates))
+        options = "\n".join(f"[{i}] {ans[:400]}" for i, (_, ans, _model) in enumerate(candidates))
         prompt = (
             f"PERGUNTA ORIGINAL: {task[:300]}\n\n"
             f"Candidatos de resposta:\n{options}\n\n"
@@ -816,7 +818,8 @@ class ReActAgent:
     def run(self, task: str, max_steps: int = MAX_STEPS, step_callback=None) -> str:
         self.scratchpad  = []
         self._tool_calls = 0
-        self._reflection_candidates = []   # [(score, answer), ...] — self-consistency (ensemble/voto)
+        self._reflection_candidates = []   # [(score, answer, model), ...] — self-consistency (ensemble/voto)
+        self._primary_llm = self.llm       # modelo principal da sessão — self.llm pode trocar durante o ensemble, isso nunca muda
         log.info("TAREFA: %s", task)
 
         self.profile.observe_message(task)
@@ -1007,7 +1010,7 @@ class ReActAgent:
                     })
                     log.info("REFLECTION: score=%d hint=%s", score, hint[:80] if hint else "")
 
-                    self._reflection_candidates.append((score, action_input))
+                    self._reflection_candidates.append((score, action_input, self.llm.model))
                     can_retry = len(self._reflection_candidates) < SELF_CONSISTENCY_MAX_ATTEMPTS
 
                     if score < REFLECTION_THRESHOLD and can_retry:
@@ -1021,13 +1024,16 @@ class ReActAgent:
                             + "Vou reescrever a Final Answer de forma mais completa e precisa.\n"
                         )
                         self.scratchpad.append(retry_hint)
-                        log.info("REFLECTION: reescrevendo resposta (tentativa %d/%d)...",
-                                  len(self._reflection_candidates) + 1, SELF_CONSISTENCY_MAX_ATTEMPTS)
+                        next_model = ENSEMBLE_MODELS[len(self._reflection_candidates) % len(ENSEMBLE_MODELS)]
+                        self.llm = OllamaLLM(model=next_model)
+                        log.info("REFLECTION: reescrevendo resposta (tentativa %d/%d) com modelo '%s'...",
+                                  len(self._reflection_candidates) + 1, SELF_CONSISTENCY_MAX_ATTEMPTS, next_model)
                         continue
 
+                    self.llm = self._primary_llm  # restaura o principal antes do voto e de qualquer turno seguinte
                     if len(self._reflection_candidates) > 1:
                         winner_idx = self._vote_best_answer(task, self._reflection_candidates)
-                        winner_score, winner_answer = self._reflection_candidates[winner_idx]
+                        winner_score, winner_answer, _winner_model = self._reflection_candidates[winner_idx]
                         emit({
                             "type":    "reflection",
                             "content": (

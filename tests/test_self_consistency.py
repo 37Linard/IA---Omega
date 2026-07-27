@@ -79,6 +79,7 @@ def test_self_consistency_keeps_first_answer_when_vote_picks_it(monkeypatch):
         ],
         vote_responses=["0"],  # o juiz (holístico) escolhe o índice 0 -- resposta A
     )
+    monkeypatch.setattr(agent_mod, "OllamaLLM", lambda model: llm)
     a = _bare_agent(llm)
 
     result = a.run(TASK, step_callback=None)
@@ -105,6 +106,7 @@ def test_reflection_recorded_in_tracing_for_dashboard(monkeypatch):
         ],
         vote_responses=["1"],
     )
+    monkeypatch.setattr(agent_mod, "OllamaLLM", lambda model: llm)
     a = _bare_agent(llm)
 
     a.run(TASK, step_callback=None)
@@ -127,6 +129,7 @@ def test_self_consistency_keeps_second_answer_when_vote_picks_it(monkeypatch):
         ],
         vote_responses=["1"],  # juiz escolhe a 2ª -- consistente com o score bem maior
     )
+    monkeypatch.setattr(agent_mod, "OllamaLLM", lambda model: llm)
     a = _bare_agent(llm)
 
     result = a.run(TASK, step_callback=None)
@@ -152,6 +155,7 @@ def test_vote_overrides_naive_max_score_pick(monkeypatch):
         ],
         vote_responses=["1"],  # juiz discorda do argmax (que seria 0)
     )
+    monkeypatch.setattr(agent_mod, "OllamaLLM", lambda model: llm)
     a = _bare_agent(llm)
 
     result = a.run(TASK, step_callback=None)
@@ -179,6 +183,7 @@ def test_self_consistency_votes_among_three_independent_attempts(monkeypatch):
         ],
         vote_responses=["2"],
     )
+    monkeypatch.setattr(agent_mod, "OllamaLLM", lambda model: llm)
     a = _bare_agent(llm)
 
     result = a.run(TASK, step_callback=None)
@@ -208,6 +213,7 @@ def test_self_consistency_guards_first_answer_against_ignored_tool_error(monkeyp
         ],
         vote_responses=["0"],  # juiz fica com a 1ª tentativa
     )
+    monkeypatch.setattr(agent_mod, "OllamaLLM", lambda model: llm)
     class _FakeTool:
         description = "gerencia tarefas agendadas"
 
