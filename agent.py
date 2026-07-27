@@ -515,7 +515,7 @@ class ReActAgent:
             "JSON:"
         )
         try:
-            raw   = self.llm.generate(prompt)
+            raw   = self._primary_llm.generate(prompt)
             block = self._find_json_block(raw)
             if not block:
                 return 4, "", []

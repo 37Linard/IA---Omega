@@ -158,3 +158,36 @@ def test_llm_restored_to_primary_when_cancelled_mid_retry(monkeypatch):
     assert a.llm is primary_llm
     assert a.llm.model == "primary-model"
     assert a.llm is a._primary_llm
+
+
+def test_reflect_always_uses_primary_llm_not_current_attempt_model(monkeypatch):
+    monkeypatch.setattr(agent_mod, "REFLECTION_ENABLED", True)
+    monkeypatch.setattr(agent_mod, "REFLECTION_THRESHOLD", 4)
+    monkeypatch.setattr(agent_mod, "SELF_CONSISTENCY_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(agent_mod, "ENSEMBLE_MODELS", ["primary-model", "alt-model"])
+
+    primary_llm = _ScriptedLLM(
+        model="primary-model",
+        react_responses=["Thought: 1.\nFinal Answer: tentativa 1 (principal)"],
+        # As DUAS avaliações de reflection devem vir do primary -- mesmo a que
+        # avalia a resposta gerada pelo modelo alternativo.
+        reflect_jsons=[
+            '{"score": 2, "issues": [], "hint": ""}',
+            '{"score": 5, "issues": [], "hint": ""}',
+        ],
+        vote_responses=["1"],
+    )
+    alt_llm = _ScriptedLLM(
+        model="alt-model",
+        react_responses=["Thought: 2.\nFinal Answer: tentativa 2 (alternativo)"],
+        reflect_jsons=[],  # vazio de propósito: se _reflect chamar isto, IndexError (pop de lista vazia)
+    )
+
+    monkeypatch.setattr(agent_mod, "OllamaLLM", lambda model: alt_llm)
+
+    a = _bare_agent(primary_llm)
+    result = a.run(TASK, step_callback=None)
+
+    assert result == "tentativa 2 (alternativo)"
+    assert alt_llm.reflect_jsons == []  # nunca foi tocado -- prova que _reflect nunca usou o alt_llm
+    assert primary_llm.reflect_jsons == []  # as 2 avaliações vieram todas do primary
