@@ -26,6 +26,7 @@ OLLAMA_MODEL   = "qwen2.5:7b-instruct-q3_K_M"
 VISION_MODEL   = "llava:7b"      # usado por analyze_image (baixe com: ollama pull llava:7b)
 OLLAMA_URL     = "http://localhost:11434"
 FALLBACK_MODEL = ""  # modelo leve pra usar se OLLAMA_MODEL travar/timeout; "" desliga fallback
+ENSEMBLE_MODELS = ["qwen2.5:7b-instruct-q3_K_M", "llama3.1:8b"]  # pool do ensemble multi-modelo — ver config.py pra explicação completa
 API_URL        = "http://localhost:8000"  # URL base da API (usada por tools pra gerar links de imagem)
 
 # ── Specialist models (opcional) ───────────────────────────────────────────
