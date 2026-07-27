@@ -1008,6 +1008,7 @@ class ReActAgent:
                             "content":  rc,
                             "score":    score,
                             "accepted": score >= REFLECTION_THRESHOLD,
+                            "model":    self.llm.model,
                         })
                         log.info("REFLECTION: score=%d hint=%s", score, hint[:80] if hint else "")
 
@@ -1043,6 +1044,7 @@ class ReActAgent:
                                 ),
                                 "score":    winner_score,
                                 "accepted": True,
+                                "model":    _winner_model,
                             })
                             log.info("SELF-CONSISTENCY: %d tentativas -> voto escolheu #%d (score %d)",
                                       len(self._reflection_candidates), winner_idx, winner_score)

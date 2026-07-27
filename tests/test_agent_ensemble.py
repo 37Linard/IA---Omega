@@ -191,3 +191,23 @@ def test_reflect_always_uses_primary_llm_not_current_attempt_model(monkeypatch):
     assert result == "tentativa 2 (alternativo)"
     assert alt_llm.reflect_jsons == []  # nunca foi tocado -- prova que _reflect nunca usou o alt_llm
     assert primary_llm.reflect_jsons == []  # as 2 avaliações vieram todas do primary
+
+
+def test_reflection_event_includes_model_name(monkeypatch):
+    monkeypatch.setattr(agent_mod, "REFLECTION_ENABLED", True)
+    monkeypatch.setattr(agent_mod, "REFLECTION_THRESHOLD", 3)
+    monkeypatch.setattr(agent_mod, "SELF_CONSISTENCY_MAX_ATTEMPTS", 2)
+
+    primary_llm = _ScriptedLLM(
+        model="primary-model",
+        react_responses=["Thought: pronto.\nFinal Answer: resposta boa de primeira"],
+        reflect_jsons=['{"score": 4, "issues": [], "hint": ""}'],
+    )
+    events = []
+    a = _bare_agent(primary_llm)
+
+    a.run(TASK, step_callback=lambda ev: events.append(ev))
+
+    reflection_events = [e for e in events if e["type"] == "reflection"]
+    assert len(reflection_events) == 1
+    assert reflection_events[0]["model"] == "primary-model"
