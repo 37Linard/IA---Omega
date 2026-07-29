@@ -60,18 +60,19 @@ class _CancelAfterN:
         return self._calls > self._n
 
 
-def _bare_agent(llm):
+def _bare_agent(llm, allow_ensemble_swap=True):
     a = ReActAgent.__new__(ReActAgent)
-    a.llm                = llm
-    a.tools              = {}
-    a.memory             = _StubMemory()
-    a.profile            = _StubProfile()
-    a._cancel            = threading.Event()
-    a._cancel_reason     = "usuário"
-    a.conversation       = []
-    a.specialist_context = ""
-    a.session_id         = ""
-    a._emit              = None
+    a.llm                 = llm
+    a.tools               = {}
+    a.memory              = _StubMemory()
+    a.profile             = _StubProfile()
+    a._cancel             = threading.Event()
+    a._cancel_reason      = "usuário"
+    a.conversation        = []
+    a.specialist_context  = ""
+    a.session_id          = ""
+    a._emit               = None
+    a.allow_ensemble_swap = allow_ensemble_swap
     return a
 
 
@@ -267,3 +268,135 @@ def test_reflection_event_includes_model_name_in_vote_result(monkeypatch):
     # (que é o que self.llm seria neste ponto, pós-restauração). Um bug trocando
     # _winner_model por self.llm.model quebraria este assert.
     assert reflection_events[2]["model"] == "alt-model"
+
+
+def test_third_attempt_cycles_back_and_reuses_primary_instance(monkeypatch):
+    """Achado de review (final review do plano do ensemble, item deferido):
+    com pool de 2 modelos e 3 tentativas permitidas, a 3ª tentativa cicla de
+    volta pro modelo principal (índice 2 % 2 == 0). Nesse caso self.llm deve
+    voltar a ser a MESMA instância _primary_llm, não um OllamaLLM novo pro
+    mesmo nome de modelo -- reconstruir seria custo (conexão/tokens) à toa."""
+    monkeypatch.setattr(agent_mod, "REFLECTION_ENABLED", True)
+    monkeypatch.setattr(agent_mod, "REFLECTION_THRESHOLD", 5)  # sempre reprova, força esgotar tentativas
+    monkeypatch.setattr(agent_mod, "SELF_CONSISTENCY_MAX_ATTEMPTS", 3)
+    monkeypatch.setattr(agent_mod, "ENSEMBLE_MODELS", ["primary-model", "alt-model"])
+
+    primary_llm = _ScriptedLLM(
+        model="primary-model",
+        react_responses=[
+            "Thought: 1.\nFinal Answer: tentativa 1 (principal)",
+            "Thought: 3.\nFinal Answer: tentativa 3 (principal de novo)",
+        ],
+        reflect_jsons=[
+            '{"score": 2, "issues": [], "hint": ""}',  # avalia tentativa 1 -> retry
+            '{"score": 2, "issues": [], "hint": ""}',  # avalia tentativa 2 (alt) -> retry
+            '{"score": 2, "issues": [], "hint": ""}',  # avalia tentativa 3 -> esgotou, aceita
+        ],
+        vote_responses=["0"],
+    )
+    alt_llm = _ScriptedLLM(
+        model="alt-model",
+        react_responses=["Thought: 2.\nFinal Answer: tentativa 2 (alternativo)"],
+    )
+
+    constructed_models = []
+
+    def fake_ollama_llm(model):
+        constructed_models.append(model)
+        return alt_llm
+
+    monkeypatch.setattr(agent_mod, "OllamaLLM", fake_ollama_llm)
+
+    a = _bare_agent(primary_llm)
+    a.run(TASK, step_callback=None)
+
+    # Só o alt-model foi CONSTRUÍDO via OllamaLLM -- o ciclo de volta pro
+    # primary (3ª tentativa) reusou a instância existente, sem chamar OllamaLLM de novo.
+    assert constructed_models == ["alt-model"]
+    # Depois da 3ª tentativa (de volta ao primary), self.llm durante a geração
+    # dela deve ter sido a MESMA instância de _primary_llm (identidade, não só
+    # o nome do modelo).
+    assert primary_llm.react_responses == []  # consumiu as 2 respostas do primary (tentativas 1 e 3)
+
+
+def test_empty_ensemble_models_retries_without_crash(monkeypatch):
+    """Achado de review: ENSEMBLE_MODELS vazio faria `len(...) % len(...)`
+    estourar ZeroDivisionError. Config atual sempre tem 2 entradas fixas, mas
+    é config editável -- um ambiente que zere a lista por engano não deveria
+    derrubar o agente, só perder o benefício do ensemble (retry no mesmo modelo)."""
+    monkeypatch.setattr(agent_mod, "REFLECTION_ENABLED", True)
+    monkeypatch.setattr(agent_mod, "REFLECTION_THRESHOLD", 4)
+    monkeypatch.setattr(agent_mod, "SELF_CONSISTENCY_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(agent_mod, "ENSEMBLE_MODELS", [])
+
+    llm = _ScriptedLLM(
+        model="primary-model",
+        react_responses=[
+            "Thought: 1.\nFinal Answer: tentativa 1",
+            "Thought: 2.\nFinal Answer: tentativa 2 (mesmo modelo, sem pool)",
+        ],
+        reflect_jsons=[
+            '{"score": 2, "issues": [], "hint": ""}',
+            '{"score": 5, "issues": [], "hint": ""}',
+        ],
+        vote_responses=["1"],
+    )
+
+    def fail_if_called(model):
+        raise AssertionError("OllamaLLM não deveria ser construído com ENSEMBLE_MODELS vazio")
+
+    monkeypatch.setattr(agent_mod, "OllamaLLM", fail_if_called)
+
+    a = _bare_agent(llm)
+    result = a.run(TASK, step_callback=None)
+
+    assert result == "tentativa 2 (mesmo modelo, sem pool)"
+    assert a.llm is llm
+
+
+def test_collaborative_specialist_never_swaps_model(monkeypatch):
+    """Achado de review: especialistas do modo colaborativo rodam em threads
+    paralelas (ver orchestrator._run_collaborative/run_one) contra o mesmo
+    servidor Ollama. Com OLLAMA_MAX_LOADED_MODELS=1 (setado no ambiente real,
+    ver memória do projeto), 2+ threads trocando de modelo ao mesmo tempo
+    thrasharia VRAM. allow_ensemble_swap=False (setado por _create_specialist
+    pro modo colaborativo) deve pular a troca de modelo, mesmo com pool
+    configurado e score reprovado."""
+    monkeypatch.setattr(agent_mod, "REFLECTION_ENABLED", True)
+    monkeypatch.setattr(agent_mod, "REFLECTION_THRESHOLD", 4)
+    monkeypatch.setattr(agent_mod, "SELF_CONSISTENCY_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(agent_mod, "ENSEMBLE_MODELS", ["primary-model", "alt-model"])
+
+    llm = _ScriptedLLM(
+        model="primary-model",
+        react_responses=[
+            "Thought: 1.\nFinal Answer: tentativa 1",
+            "Thought: 2.\nFinal Answer: tentativa 2 (mesmo modelo, swap desabilitado)",
+        ],
+        reflect_jsons=[
+            '{"score": 2, "issues": [], "hint": ""}',
+            '{"score": 5, "issues": [], "hint": ""}',
+        ],
+        vote_responses=["1"],
+    )
+
+    def fail_if_called(model):
+        raise AssertionError("OllamaLLM não deveria ser construído com allow_ensemble_swap=False")
+
+    monkeypatch.setattr(agent_mod, "OllamaLLM", fail_if_called)
+
+    a = _bare_agent(llm, allow_ensemble_swap=False)
+    result = a.run(TASK, step_callback=None)
+
+    assert result == "tentativa 2 (mesmo modelo, swap desabilitado)"
+    assert a.llm is llm
+
+
+def test_config_ensemble_models_never_includes_fallback_model():
+    """Invariante documentada no comentário de config.py: FALLBACK_MODEL
+    (llama3.2:3b, infra) nunca deve entrar no pool de VOTO de qualidade do
+    ensemble -- histórico de 'ignorava instrução, repetia tool call' arriscaria
+    vencer o voto com resposta confiante e errada. Teste de regressão pra
+    quem editar config.py sem reler o comentário."""
+    import config
+    assert config.FALLBACK_MODEL not in config.ENSEMBLE_MODELS

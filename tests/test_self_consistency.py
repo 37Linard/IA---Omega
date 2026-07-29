@@ -48,7 +48,7 @@ class _ScriptedLLM:
 
 def _bare_agent(llm):
     a = ReActAgent.__new__(ReActAgent)
-    a.llm                = llm
+    a.llm                 = llm
     a.tools               = {}
     a.memory              = _StubMemory()
     a.profile             = _StubProfile()
@@ -58,6 +58,7 @@ def _bare_agent(llm):
     a.specialist_context  = ""
     a.session_id          = ""
     a._emit               = None
+    a.allow_ensemble_swap = True
     return a
 
 

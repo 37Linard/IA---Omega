@@ -166,18 +166,21 @@ REGRAS CRÍTICAS:
 
 
 class ReActAgent:
-    def __init__(self, llm, tools: list, specialist_context: str = "", session_id: str = "", memory=None):
-        self.llm                = llm
-        self.tools              = {t.name: t for t in tools} if isinstance(tools, list) else tools
-        self.scratchpad         = []
-        self.memory             = memory if memory is not None else Memory()
-        self.profile            = UserProfile()
-        self._cancel            = threading.Event()
-        self._cancel_reason     = "usuário"
-        self.conversation       = []  # [{task, result}, ...]
-        self.specialist_context = specialist_context
-        self.session_id         = session_id
-        self._emit              = None  # set at run() start — used by HITL gate
+    def __init__(self, llm, tools: list, specialist_context: str = "", session_id: str = "", memory=None,
+                 allow_ensemble_swap: bool = True):
+        self.llm                 = llm
+        self._primary_llm        = llm  # default seguro pra quem usa a instância sem passar por run() — run() reatribui no início de qualquer forma
+        self.tools               = {t.name: t for t in tools} if isinstance(tools, list) else tools
+        self.scratchpad          = []
+        self.memory              = memory if memory is not None else Memory()
+        self.profile             = UserProfile()
+        self._cancel             = threading.Event()
+        self._cancel_reason      = "usuário"
+        self.conversation        = []  # [{task, result}, ...]
+        self.specialist_context  = specialist_context
+        self.session_id          = session_id
+        self._emit               = None  # set at run() start — used by HITL gate
+        self.allow_ensemble_swap = allow_ensemble_swap  # False p/ especialistas colaborativos (paralelos) — evita threads concorrentes trocando modelo ao mesmo tempo (OLLAMA_MAX_LOADED_MODELS=1 força thrashing de VRAM se isso acontecer)
 
     def _log_error(self, task: str, error_type: str, details: str):
         try:
@@ -879,7 +882,7 @@ class ReActAgent:
                 emit({"type": "final", "content": final})
                 emit({"type": "done", "content": ""})
                 plan_store.finish(plan_id)
-                self.memory.save_session_with_llm(task, final[:200], results, self.llm, self.session_id)
+                self.memory.save_session_with_llm(task, final[:200], results, self._primary_llm, self.session_id)
                 self.conversation = self.conversation[-4:]
                 self.conversation.append({"task": task, "result": final[:400]})
                 return final
@@ -961,7 +964,7 @@ class ReActAgent:
                             log.info("LOOP: forçando Final Answer com última observação")
                             forced = f"Com base nos dados coletados:\n\n{last_observation}"
                             emit({"type": "final", "content": forced})
-                            self.memory.save_session_with_llm(task, forced[:200], self.scratchpad, self.llm, self.session_id)
+                            self.memory.save_session_with_llm(task, forced[:200], self.scratchpad, self._primary_llm, self.session_id)
                             self.conversation = self.conversation[-4:]
                             self.conversation.append({"task": task, "result": forced[:400]})
                             return forced
@@ -1026,10 +1029,17 @@ class ReActAgent:
                                 + "Vou reescrever a Final Answer de forma mais completa e precisa.\n"
                             )
                             self.scratchpad.append(retry_hint)
-                            next_model = ENSEMBLE_MODELS[len(self._reflection_candidates) % len(ENSEMBLE_MODELS)]
-                            self.llm = OllamaLLM(model=next_model)
-                            log.info("REFLECTION: reescrevendo resposta (tentativa %d/%d) com modelo '%s'...",
-                                      len(self._reflection_candidates) + 1, SELF_CONSISTENCY_MAX_ATTEMPTS, next_model)
+                            if ENSEMBLE_MODELS and self.allow_ensemble_swap:
+                                next_model = ENSEMBLE_MODELS[len(self._reflection_candidates) % len(ENSEMBLE_MODELS)]
+                                # reusa a instância principal se o ciclo voltou pro mesmo modelo —
+                                # evita recriar OllamaLLM à toa (ex: pool de 2 modelos, 3ª tentativa)
+                                self.llm = self._primary_llm if next_model == self._primary_llm.model else OllamaLLM(model=next_model)
+                                log.info("REFLECTION: reescrevendo resposta (tentativa %d/%d) com modelo '%s'...",
+                                          len(self._reflection_candidates) + 1, SELF_CONSISTENCY_MAX_ATTEMPTS, next_model)
+                            else:
+                                log.info("REFLECTION: reescrevendo resposta (tentativa %d/%d), sem troca de modelo (%s)...",
+                                          len(self._reflection_candidates) + 1, SELF_CONSISTENCY_MAX_ATTEMPTS,
+                                          "especialista colaborativo" if not self.allow_ensemble_swap else "ENSEMBLE_MODELS vazio")
                             continue
 
                         self.llm = self._primary_llm  # restaura o principal antes do voto e de qualquer turno seguinte

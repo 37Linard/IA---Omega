@@ -273,10 +273,13 @@ class OrchestratorAgent:
     # -----------------------------------------------------------------
     # Criação de especialista
     # -----------------------------------------------------------------
-    def _create_specialist(self, specialist_name: str, tool_names: list[str] = None):
+    def _create_specialist(self, specialist_name: str, tool_names: list[str] = None, allow_ensemble_swap: bool = True):
         """tool_names=None -> toolset padrao do especialista (ou tudo se for 'geral',
         que nao tem categoria propria). tool_names explicito -> restringe a essa lista
-        (usado pra liberar so os dominios detectados na tarefa, nao a ferramenta inteira)."""
+        (usado pra liberar so os dominios detectados na tarefa, nao a ferramenta inteira).
+        allow_ensemble_swap=False pros especialistas do modo colaborativo (paralelos,
+        ver _run_collaborative) -- threads concorrentes trocando de modelo ao mesmo tempo
+        thrashariam VRAM (OLLAMA_MAX_LOADED_MODELS=1 só mantém 1 modelo residente)."""
         from agent import ReActAgent
 
         spec = SPECIALISTS[specialist_name]
@@ -296,6 +299,7 @@ class OrchestratorAgent:
             specialist_context=SPECIALIST_PROMPTS.get(specialist_name, ""),
             session_id=self.session_id,
             memory=self.memory,
+            allow_ensemble_swap=allow_ensemble_swap,
         )
         agent._cancel = self._cancel
         if "remember_fact" in agent.tools:
@@ -396,7 +400,7 @@ class OrchestratorAgent:
             spec_model = get_specialist_model(name)
             emit({"type": "agent_status", "id": idx, "agent": f"{label}·{spec_model}", "status": "running", "subtask": subtask})
 
-            agent = self._create_specialist(name)
+            agent = self._create_specialist(name, allow_ensemble_swap=False)
             with self._lock:
                 self._active.append(agent)
 
