@@ -52,3 +52,10 @@ desktop.ini
 .vscode/
 *.swp
 .coverage
+
+# LoRA experiments (persistent, not part of product)
+lora_experiments/
+unsloth_compiled_cache/
+
+# eval_harness scratch state (isolamento de memory/audit/tracing durante testes)
+.scratch_round2/
