@@ -303,6 +303,7 @@ Ver a docstring de `plugin_manager.py` pro modelo de segurança completo. Nunca 
 - **Prompt-injection guard** — tools que ingerem conteúdo externo (web/páginas/arquivos) sanitizadas contra instrução embutida no conteúdo
 - **Schema por tool** — input validado antes de executar, rejeita malformado antes de chegar na tool
 - **Circuit breaker** — para de tentar tool quebrada repetidamente; alerta de taxa de erro alta no Dashboard
+- **Export de dados** — `GET /export/data` baixa um zip com tudo que o agente guarda de você: `agent_memory.json` (facts/sessions/episódios/knowledge graph) + `conversas/*.md` (uma nota por sessão). Protegido por `AUTH_PASSWORD` igual `/history` quando ativa
 - **Eval harness + git hook pre-push** — golden tasks rodam contra o agente real (Ollama) automaticamente antes de permitir push
 
 > ⚠️ **Não commite** `gdrive_credentials.json`, `gdrive_token.json`, `workspace/` ou `agent_memory.json` — esses arquivos contêm dados pessoais e tokens OAuth.

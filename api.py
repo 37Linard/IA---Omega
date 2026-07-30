@@ -357,6 +357,56 @@ async def export_conversation(body: dict, _rl=Depends(_check_rate_limit)):
     }
 
 
+def _session_to_markdown(session: dict) -> str:
+    ts = session.get("timestamp", "")[:16].replace("T", " ")
+    return (
+        f"---\ncriado: {ts}\ntags: [agente-ia, sessão]\n"
+        f"steps: {session.get('steps', 0)}\n---\n\n"
+        f"# {session.get('task', '(sem título)')}\n\n"
+        f"**Data:** {ts}  \n**Steps:** {session.get('steps', 0)}\n\n"
+        f"## Resultado\n\n{session.get('result', '')}\n"
+    )
+
+
+@app.get("/export/data")
+async def export_data(
+    _rl=Depends(_check_rate_limit),
+    credentials: HTTPBasicCredentials = Depends(check_auth),
+):
+    """Exporta TODOS os dados do usuário num zip: agent_memory.json (raw,
+    bytes idênticos ao disco — facts/sessions/episodes/kg) + conversas/*.md
+    (uma nota por sessão, mesmo formato do export automático pro Obsidian,
+    mas sempre gerado aqui — não depende de OBSIDIAN_BASE configurado).
+    Portabilidade dos dados do usuário, não telemetria: nada sai da máquina,
+    o zip só é montado em memória e devolvido pra quem pediu."""
+    import io
+    import re
+    import zipfile
+    from datetime import datetime
+    from memory import Memory, MEMORY_FILE
+
+    m = Memory()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        with open(MEMORY_FILE, "rb") as f:
+            zf.writestr("agent_memory.json", f.read())
+
+        for session in m.data.get("sessions", []):
+            date_prefix = str(session.get("timestamp", ""))[:10] or "sem-data"
+            safe_title = re.sub(r'[<>:"/\\|?*]', "", str(session.get("task", "")))[:60].strip() or "conversa"
+            sid = session.get("id", "")
+            arcname = f"conversas/{date_prefix} — {sid} — {safe_title}.md"
+            zf.writestr(arcname, _session_to_markdown(session))
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M")
+    filename = f"export_dados_agente_ia_{stamp}.zip"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...), _rl=Depends(_check_rate_limit)):
     import os
