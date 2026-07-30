@@ -136,7 +136,13 @@ async def root():
 
 
 @app.get("/audit")
-async def get_audit(limit: int = 100, tool: str = "", _rl=Depends(_check_rate_limit)):
+async def get_audit(
+    limit: int = 100, tool: str = "",
+    _rl=Depends(_check_rate_limit),
+    credentials: HTTPBasicCredentials = Depends(check_auth),
+):
+    # entries tem input/output crus de tool (comando de terminal, conteúdo de
+    # arquivo, e-mail etc.) — mais sensível que /history, mesmo gate
     return {"entries": _audit.query(limit=min(limit, 500), tool_filter=tool)}
 
 
@@ -573,12 +579,20 @@ async def kg_consolidate(max_age_days: int = 90, min_count: int = 2):
 
 @app.get("/trace/llm/stats")
 async def trace_llm_stats(days: int = 1):
+    # só agregado (calls/errors/avg_ms), sem conteúdo — mesma sensibilidade
+    # de /metrics (ungated), diferente de /trace/llm/recent (prompt real)
     import tracing
     return tracing.stats(days=days)
 
 
 @app.get("/trace/llm/recent")
-async def trace_llm_recent(limit: int = 50):
+async def trace_llm_recent(
+    limit: int = 50,
+    _rl=Depends(_check_rate_limit),
+    credentials: HTTPBasicCredentials = Depends(check_auth),
+):
+    # prompt_preview é literalmente um pedaço do prompt real (pode conter
+    # contexto de conversa sensível) — mesmo gate de /audit
     import tracing
     return tracing.recent(limit=min(limit, 200))
 

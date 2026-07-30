@@ -66,6 +66,39 @@ export async function fetchHistory(): Promise<{ sessions: Array<{ task: string; 
   return req('/history')
 }
 
+export interface AuditEntry {
+  ts: string
+  tool: string
+  input: string
+  output: string
+  duration: number
+  ip: string
+}
+
+export async function fetchAudit(limit: number, tool: string): Promise<{ entries: AuditEntry[] }> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (tool) params.set('tool', tool)
+  return req(`/audit?${params}`)
+}
+
+export interface TraceSpan {
+  ts: string
+  kind: string
+  model: string
+  duration_ms: number
+  prompt_tokens: number
+  completion_tokens: number
+  tps: number
+  success: number
+  error: string
+  fallback_used: number
+  prompt_preview: string
+}
+
+export async function fetchTraceRecent(limit: number): Promise<TraceSpan[]> {
+  return req(`/trace/llm/recent?limit=${limit}`)
+}
+
 export async function fetchRagDocs(): Promise<{ docs: Array<{ file: string; chunks: number; pages?: number; path?: string }> }> {
   return req('/rag/docs')
 }

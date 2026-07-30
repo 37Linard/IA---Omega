@@ -1,9 +1,10 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Menu, Sun, Moon, User, Heart, Cpu, Database, Trash2, FolderOpen, RefreshCw, CheckCircle, XCircle, Loader2, Layers, GitGraph, LayoutGrid, Workflow, Download } from 'lucide-react'
+import { Menu, Sun, Moon, User, Heart, Cpu, Database, Trash2, FolderOpen, RefreshCw, CheckCircle, XCircle, Loader2, Layers, GitGraph, LayoutGrid, Workflow, Download, ScrollText } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
-import { fetchModels, setModel, fetchProfile, saveProfile, fetchRagDocs, ragIndexFolder, ragDeleteDoc, uploadFile, fetchMetrics, fetchSandboxStatus, fetchSpecialistModels, setSpecialistModel, exportConversation, fetchHealth } from '@/lib/api'
+import { fetchModels, setModel, fetchProfile, saveProfile, fetchRagDocs, ragIndexFolder, ragDeleteDoc, uploadFile, fetchMetrics, fetchSandboxStatus, fetchSpecialistModels, setSpecialistModel, exportConversation, fetchHealth, fetchAudit, fetchTraceRecent } from '@/lib/api'
+import type { AuditEntry, TraceSpan } from '@/lib/api'
 import { ThoughtTree } from './ThoughtTree'
 import { WorkflowDAG } from './WorkflowDAG'
 import type { UserProfile } from '@/lib/types'
@@ -19,6 +20,7 @@ export function Header({ onToggleSidebar }: Props) {
   const [currentModel, setCurrentModel] = useState('')
   const [profileOpen, setProfileOpen] = useState(false)
   const [healthOpen, setHealthOpen] = useState(false)
+  const [auditOpen, setAuditOpen] = useState(false)
   const [ragOpen, setRagOpen] = useState(false)
   const [modelsOpen, setModelsOpen] = useState(false)
   const [nocOpen,    setNocOpen]    = useState(false)
@@ -174,6 +176,10 @@ export function Header({ onToggleSidebar }: Props) {
             <Heart size={15} />
           </HeaderBtn>
 
+          <HeaderBtn onClick={() => setAuditOpen(true)} title="Audit log / Tracing">
+            <ScrollText size={15} />
+          </HeaderBtn>
+
           <HeaderBtn onClick={toggleTheme} title={theme === 'dark' ? 'Tema claro' : 'Tema escuro'}>
             {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
           </HeaderBtn>
@@ -193,6 +199,7 @@ export function Header({ onToggleSidebar }: Props) {
         />
       )}
       {modelsOpen && <SpecialistModelsModal models={models} onClose={() => setModelsOpen(false)} />}
+      {auditOpen && <AuditLogModal onClose={() => setAuditOpen(false)} />}
       {ragOpen && <RagModal onClose={() => setRagOpen(false)} />}
       {profileOpen && profile && (
         <ProfileModal profile={profile} onSave={async d => { const u = await saveProfile(d); setProfile(u); setProfileOpen(false) }} onClose={() => setProfileOpen(false)} />
@@ -866,6 +873,203 @@ function RagModal({ onClose }: { onClose: () => void }) {
 }
 
 type SpecialistEntry = { key: string; label: string; model: string }
+
+function AuditLogModal({ onClose }: { onClose: () => void }) {
+  const [tab, setTab] = useState<'audit' | 'tracing'>('audit')
+  const [audit, setAudit] = useState<AuditEntry[]>([])
+  const [spans, setSpans] = useState<TraceSpan[]>([])
+  const [toolFilter, setToolFilter] = useState('')
+  const [limit, setLimit] = useState(100)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      if (tab === 'audit') {
+        const d = await fetchAudit(limit, toolFilter.trim())
+        setAudit(d.entries)
+      } else {
+        setSpans(await fetchTraceRecent(limit))
+      }
+      setError(false)
+    } catch {
+      setError(true)
+    } finally {
+      setLoading(false)
+    }
+  }, [tab, limit, toolFilter])
+
+  useEffect(() => { load() }, [load])
+
+  const cellStyle: React.CSSProperties = {
+    padding: '6px 10px',
+    fontSize: '11.5px',
+    color: 'var(--text-secondary)',
+    borderBottom: '1px solid var(--border)',
+    maxWidth: '220px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  }
+  const headStyle: React.CSSProperties = {
+    padding: '6px 10px',
+    fontSize: '10.5px',
+    fontWeight: 600,
+    color: 'var(--text-muted)',
+    textAlign: 'left',
+    borderBottom: '1px solid var(--border-strong)',
+    letterSpacing: '0.03em',
+    position: 'sticky',
+    top: 0,
+    background: 'var(--surface)',
+  }
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div
+        style={{
+          background: 'var(--surface)',
+          border: '1px solid var(--border-strong)',
+          borderRadius: 'var(--radius-lg)',
+          width: '100%',
+          maxWidth: '820px',
+          maxHeight: '85vh',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
+        }}
+        className="anim-fade-up"
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <ScrollText size={14} style={{ color: 'var(--accent)' }} />
+            <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>Audit log / Tracing</span>
+          </div>
+          <button onClick={onClose} style={{ color: 'var(--text-muted)', background: 'none', fontSize: '18px', lineHeight: 1, cursor: 'pointer' }}>×</button>
+        </div>
+
+        {/* Tabs + filtros */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 20px', borderBottom: '1px solid var(--border)', flexShrink: 0, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '4px', background: 'var(--surface-hover)', borderRadius: '8px', padding: '3px' }}>
+            {(['audit', 'tracing'] as const).map(t => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                style={{
+                  fontSize: '12px',
+                  padding: '5px 12px',
+                  borderRadius: '6px',
+                  background: tab === t ? 'var(--accent)' : 'transparent',
+                  color: tab === t ? '#fff' : 'var(--text-muted)',
+                  cursor: 'pointer',
+                }}
+              >
+                {t === 'audit' ? 'Ferramentas' : 'LLM (tracing)'}
+              </button>
+            ))}
+          </div>
+
+          {tab === 'audit' && (
+            <input
+              value={toolFilter}
+              onChange={e => setToolFilter(e.target.value)}
+              placeholder="Filtrar por tool..."
+              style={{ ...inputStyle, fontSize: '12px', padding: '6px 10px', width: '150px' }}
+            />
+          )}
+
+          <select value={limit} onChange={e => setLimit(Number(e.target.value))} style={{ ...inputStyle, fontSize: '12px', padding: '6px 10px' }}>
+            {[50, 100, 200, 500].map(n => <option key={n} value={n} style={{ background: '#1a1a1a' }}>{n}</option>)}
+          </select>
+
+          <button onClick={load} title="Atualizar" style={{ marginLeft: 'auto', color: 'var(--text-muted)', background: 'none', cursor: 'pointer', display: 'flex' }}>
+            <RefreshCw size={14} style={loading ? { animation: 'spin 1s linear infinite' } : undefined} />
+          </button>
+        </div>
+
+        {/* Conteúdo */}
+        <div style={{ overflow: 'auto', flex: 1 }}>
+          {error && (
+            <p style={{ fontSize: '13px', color: '#f87171', textAlign: 'center', padding: '24px' }}>
+              Erro ao carregar — backend disponível? (endpoint protegido por AUTH_PASSWORD se configurada)
+            </p>
+          )}
+
+          {!error && tab === 'audit' && (
+            audit.length === 0 ? (
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', padding: '24px' }}>Nenhuma entrada.</p>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    <th style={headStyle}>Hora</th>
+                    <th style={headStyle}>Tool</th>
+                    <th style={headStyle}>Input</th>
+                    <th style={headStyle}>Output</th>
+                    <th style={headStyle}>ms</th>
+                    <th style={headStyle}>IP</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {audit.map((e, i) => (
+                    <tr key={i}>
+                      <td style={{ ...cellStyle, maxWidth: '110px' }}>{e.ts.replace('T', ' ')}</td>
+                      <td style={{ ...cellStyle, maxWidth: '100px', fontFamily: 'monospace' }}>{e.tool}</td>
+                      <td style={cellStyle} title={e.input}>{e.input}</td>
+                      <td style={cellStyle} title={e.output}>{e.output}</td>
+                      <td style={{ ...cellStyle, maxWidth: '60px' }}>{Math.round((e.duration ?? 0) * 1000)}</td>
+                      <td style={{ ...cellStyle, maxWidth: '90px' }}>{e.ip || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
+          )}
+
+          {!error && tab === 'tracing' && (
+            spans.length === 0 ? (
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', padding: '24px' }}>Nenhum span.</p>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    <th style={headStyle}>Hora</th>
+                    <th style={headStyle}>Model</th>
+                    <th style={headStyle}>ms</th>
+                    <th style={headStyle}>Tokens</th>
+                    <th style={headStyle}>TPS</th>
+                    <th style={headStyle}>Status</th>
+                    <th style={headStyle}>Prompt</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {spans.map((s, i) => (
+                    <tr key={i}>
+                      <td style={{ ...cellStyle, maxWidth: '110px' }}>{s.ts.replace('T', ' ')}</td>
+                      <td style={{ ...cellStyle, maxWidth: '130px', fontFamily: 'monospace' }}>{s.model}</td>
+                      <td style={{ ...cellStyle, maxWidth: '60px' }}>{Math.round(s.duration_ms)}</td>
+                      <td style={{ ...cellStyle, maxWidth: '80px' }}>{s.prompt_tokens}/{s.completion_tokens}</td>
+                      <td style={{ ...cellStyle, maxWidth: '50px' }}>{s.tps || '—'}</td>
+                      <td style={{ ...cellStyle, maxWidth: '90px', color: s.success ? '#4ade80' : '#f87171' }}>
+                        {s.success ? (s.fallback_used ? 'fallback' : 'ok') : 'erro'}
+                      </td>
+                      <td style={cellStyle} title={s.prompt_preview || s.error}>{s.prompt_preview || s.error}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function SpecialistModelsModal({ models, onClose }: { models: string[]; onClose: () => void }) {
   const [specialists, setSpecialists] = useState<SpecialistEntry[]>([])
