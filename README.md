@@ -288,6 +288,27 @@ Ver a docstring de `plugin_manager.py` pro modelo de segurança completo. Nunca 
 
 ---
 
+## 🧪 Testes E2E (Playwright)
+
+Cobrem o frontend de verdade (browser real, WS real contra o backend) — complementam o `pytest` (backend isolado/mockado). Alvo é **sempre `localhost:8000`**, nunca `npm run dev` na 3000: `WS_URL`/`API_BASE` (`frontend/lib/utils.ts`) são relativos ao host atual, sem proxy configurado (`next.config.ts` usa `output: "export"`), então a 3000 nunca fala com o backend de verdade.
+
+```bash
+# 1. Build + sobe backend numa porta só (mesmo fluxo de produção)
+.\iniciar_frontend.bat
+
+# 2. Noutro terminal
+cd frontend
+npm run test:e2e          # headless
+npm run test:e2e:ui       # modo interativo (Playwright UI)
+```
+
+- `e2e/app-shell.spec.ts` / `e2e/chat-optimistic.spec.ts` — só precisam do backend de pé, **não** do Ollama (cobrem UI/WS/estado otimista client-side).
+- `e2e/chat-full-response.spec.ts` — precisa do Ollama rodando (pula com aviso, não falha, se `localhost:11434` não responder — mesmo padrão fail-open do hook `pre-push`).
+
+**Achado real medindo isso**: a 1ª conexão WS demora **~13-15s** pra ficar pronta — `create_agent()` carrega as ~30 tools no backend nessa primeira vez. Os specs já contam com essa margem (timeout de 30-60s nos waits de conexão); não é bug, é custo real de cold-start.
+
+---
+
 ## 🔒 Segurança e Privacidade
 
 - **Zero dados externos** — nenhuma chamada para OpenAI, Anthropic ou qualquer API de IA

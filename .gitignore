@@ -41,6 +41,9 @@ frontend/node_modules/
 frontend/.next/
 frontend/out/
 frontend/.env*
+frontend/test-results/
+frontend/playwright-report/
+frontend/playwright/.cache/
 
 # OS
 .DS_Store
