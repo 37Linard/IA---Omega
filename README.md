@@ -1,4 +1,7 @@
-# 🤖 Agente IA Local — v1.3
+# 🤖 Agente IA Local — v1.4
+
+[![Tests](https://github.com/37Linard/IA---Omega/actions/workflows/tests.yml/badge.svg)](https://github.com/37Linard/IA---Omega/actions/workflows/tests.yml)
+![Coverage](./coverage.svg)
 
 > Assistente de IA autônomo rodando **100% na sua máquina** — sem APIs externas, sem custos por token, sem dados saindo do seu PC.
 
@@ -8,6 +11,8 @@ Usa Ollama para inferência local, arquitetura ReAct para raciocínio passo a pa
 **v1.1** — Geração de imagem local (SD-turbo) · LanceDB (substituiu ChromaDB) · Export de conversa pro Obsidian · Auto-detect de nível técnico · Plugin manager sandboxado
 **v1.2** — Refino visual do frontend · Fontes de pesquisa ao vivo no chat · `generate_image` com seed/múltiplas imagens/upscale
 **v1.3** — Testes automatizados (pytest) · HITL por camada de risco · Isolamento least-privilege por especialista · Prompt-injection guard · Schema validado por tool · Circuit breaker · Eval harness + git hook pre-push · Memória episódica cross-sessão · Plan-then-Execute persistido em disco · Execução proativa (`schedule_task`) · Guards de fidelidade da resposta final
+**v1.3.1** — RAG busca também episódios de memória · fix de memória não-compartilhada entre especialistas · `workspace/` fora da árvore vigiada pelo reload (NTFS junction) · otimização de performance medida (flash attention + KV cache + quant menor)
+**v1.4** — Auditoria de segurança em todas as tools destructive (sandbox-escape, SSRF, query injection) · CI (GitHub Actions) + secret-scanning (gitleaks) · `requirements.txt` pinado · circuit breaker com cooldown por tool · mypy · dashboard com taxa de reflection-rewrite · `discord_notify` configurado
 
 ---
 
@@ -442,6 +447,13 @@ pytest
 - [x] Execução proativa — tool `schedule_task`, agente se auto-agenda via chat
 - [x] Guards de fidelidade — Final Answer não pode contradizer um erro real na Observation
 - [x] Self-consistency (best-of-2) na Reflection Loop
+
+### v1.3.1 — Entregue ✅ (2026-07-22)
+- [x] `rag_search` busca também episódios de memória (resumo de sessões passadas)
+- [x] Fix real: memória não era compartilhada entre orchestrator e especialistas — episódios nunca eram criados em produção
+- [x] Guard de self-consistency também no branch "1ª tentativa ganhou"
+- [x] `workspace/` movido pra fora da árvore vigiada pelo reload do uvicorn (NTFS junction)
+- [x] Otimização de performance medida: `OLLAMA_FLASH_ATTENTION=1` + `OLLAMA_KV_CACHE_TYPE=q8_0` + troca de modelo (Q4_K_M → Q3_K_M) pra caber 100% na GPU de 6GB
 
 ### v1.4 — Entregue ✅ (2026-07-23, hardening)
 - [x] Auditoria de segurança em todas as tools "destructive" — sandbox-escape corrigido em `terminal`/`git`, SSRF corrigido em `browser`, query injection corrigida em `google_drive`, `keyboard`/`mouse` passam a exigir aprovação humana sempre (sem whitelist possível pra controle bruto de tecla/clique)

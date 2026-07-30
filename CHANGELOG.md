@@ -3,7 +3,19 @@
 Histórico de versões do agente. Formato livre, não segue semver estrito — cada
 bloco é uma sessão/leva de trabalho, não um release numerado à parte.
 
-## [Não lançado] — 2026-07-23 — hardening de segurança
+## [Não lançado]
+
+Trabalho commitado em `main` desde v1.4, ainda sem número de versão atribuído
+(escopo grande demais pra resumir aqui sem virar a própria reconciliação de novo —
+ver [[project_agente_ia]] na memória do agente pra changelog sessão-a-sessão):
+RAG re-rank com cross-encoder, sandbox local real via Job Object (Windows), eval
+noturno automático (golden tasks 1x/dia), self-consistency N=3 com votação real,
+streaming de tool-call parcial, ensemble multi-modelo real (troca de modelo entre
+tentativas), Prometheus/Grafana, plugin signing Ed25519 + marketplace discovery,
+unificação de `knowledge_graph.json` em `agent_memory.json`, POC de LoRA fine-tune
+(isolado em `lora_experiments/`, não é produto).
+
+## v1.4 — 2026-07-23 — hardening de segurança
 
 ### Corrigido
 - **Sandbox `terminal`**: whitelist só olhava a 1ª palavra do comando, mas rodava com
@@ -25,15 +37,50 @@ bloco é uma sessão/leva de trabalho, não um release numerado à parte.
 - **`sandbox.Dockerfile`**: build quebrado — `python:3.12-slim` atualizou e já reserva
   UID/GID 65534 (nobody/nogroup), `useradd`/`groupadd` batiam em "already exists".
 - `KEEP_ALIVE` faltando em `config.example.py` (drift do template real).
+- **`config.example.py`**: 10 nomes faltando vs `config.py` real (`API_URL`,
+  `EMBED_MODEL`, `MANAGER_MODEL`, `REDIS_URL`, `REFLECTION_ENABLED`,
+  `REFLECTION_THRESHOLD`, `SHORT_TERM_MSGS`, `SHORT_TERM_TTL`, `SPECIALIST_MODELS`,
+  `link_note_in_conversas_index`) — qualquer clone novo seguindo o próprio README
+  (`cp config.example.py config.py`) quebrava com `ImportError`. Achado rodando o CI.
+- **CI (`pyautogui`)**: conecta em X server na importação, não só no uso — quebrava
+  em Linux headless mesmo com `.screenshot` mockado. Fix: módulo falso injetado em
+  `sys.modules` antes do import lazy, real nunca é tocado.
+- Vazamento de conexão sqlite em caminhos de erro (`audit.py`, `tracing.py`,
+  `run_sql_tool.py` — mesmo bug em 3 arquivos).
+- `tools/_paths.py` (novo): boundary check de pasta permitida usava `startswith()`
+  puro — `"Desktop-secret/x"` passava como se estivesse dentro de `"Desktop/"`.
+- `run_sql_tool`: bloqueio de `DROP`/`TRUNCATE` exigia espaço literal,
+  `"DROP\nTABLE x"` bypassava (mesma classe do bug do `git_tool` acima).
+- `slack_tool`: `list_channels` — descrição da tool citava o método, código nunca
+  implementava.
+- `api.py`: `POST /model` chamava `log.info()` com `log` nunca definido —
+  `NameError` toda troca de modelo pela API, sempre quebrado, sem teste cobrindo.
+  Achado pelo mypy.
 
 ### Adicionado
 - `audit.py`/`tracing.py`: `prune(max_age_days)` — sem isso `audit.db`/`traces.db`
   cresciam pra sempre. Endpoints `POST /audit/prune`, `POST /trace/llm/prune`.
 - `DISCORD_WEBHOOK_URL` configurada e testada em produção.
 - `OLLAMA_MAX_LOADED_MODELS=1` / `OLLAMA_NUM_PARALLEL=1`.
-- 40+ testes novos cobrindo os achados acima. Suite completa: 197 passed.
+- CI (GitHub Actions) — `pytest` a cada push/PR pro `main`.
+- Secret-scanning (`gitleaks`) no CI, rodado também local contra o histórico
+  completo de commits (0 achado).
+- `requirements.txt` com versão pinada em 35 libs (era 0); 6 libs listadas mas
+  não instaladas de fato no ambiente real, instaladas.
+- `pytest-cov` — cobertura real medida (33%→41% ao longo da sessão).
+- 73 testes novos cobrindo tools de leitura/escrita sem cobertura nenhuma
+  (`run_sql`, `read_spreadsheet`, `generate_chart`, `generate_report`, `save_note`,
+  `remember_fact`, `http_request`, `clipboard`, `screenshot`, `analyze_image`,
+  `read_file`, `list_directory`).
+- Circuit breaker: cooldown por tool (`CIRCUIT_BREAKER_COOLDOWNS`) — credencial
+  faltando (Drive/Notion/Slack/Discord/email) = 30min, rede transiente
+  (web_search/fetch_page/get_currency/get_crypto) = 90s, em vez de 300s fixo pra tudo.
+- Dashboard: taxa de reflection-rewrite (quanto o critic reprova a 1ª resposta).
+- mypy configurado (`mypy.ini`, lenient — projeto começou sem tipagem nenhuma).
+- `/health` avisa quando `JWT_SECRET` vazio com `AUTH_PASSWORD` ativa.
+- 60+ testes novos no total cobrindo os achados acima. Suite completa: 291 passed.
 
-## v1.4 — 2026-07-22
+## v1.3.1 — 2026-07-22
 
 - `rag_search` busca também episódios de memória (resumo de sessões passadas).
 - Fix real: memória não era compartilhada entre orchestrator e especialistas —

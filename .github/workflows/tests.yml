@@ -9,6 +9,8 @@ on:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -23,5 +25,15 @@ jobs:
       - name: Config de teste
         run: cp config.example.py config.py
 
-      - name: Roda testes
+      - name: Roda testes (com gate de cobertura, ver pytest.ini --cov-fail-under)
         run: pytest
+
+      - name: Gera badge de cobertura
+        run: coverage-badge -o coverage.svg -f
+
+      - name: Commita badge atualizado
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: atualiza badge de cobertura [skip ci]"
+          file_pattern: coverage.svg
