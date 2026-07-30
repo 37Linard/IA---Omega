@@ -236,7 +236,10 @@ REFLECTION_THRESHOLD = 2            # retry se score <= 2 (1-5)
 HITL_ENABLED         = False
 HITL_GATE_TIERS      = ["destructive"]   # quais tiers pausam pra aprovação quando HITL_ENABLED=True
 
-# Especialistas com modelos diferentes
+# Especialistas com modelos diferentes — desligado por padrão (thrashing de
+# VRAM com GPU de 6GB + OLLAMA_MAX_LOADED_MODELS=1, código já pronto e
+# testado, só ative se sua GPU aguenta >1 modelo residente ao mesmo tempo)
+SPECIALIST_MODELS_ENABLED = False
 SPECIALIST_MODELS = {
     # "codigo": "qwen2.5-coder:7b",
 }

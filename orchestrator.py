@@ -18,8 +18,17 @@ log = logging.getLogger(__name__)
 _runtime_models: dict[str, str] = {}
 
 
+class SpecialistModelsDisabledError(Exception):
+    pass
+
+
 def get_specialist_model(specialist: str) -> str:
-    from config import SPECIALIST_MODELS, OLLAMA_MODEL
+    from config import SPECIALIST_MODELS, SPECIALIST_MODELS_ENABLED, OLLAMA_MODEL
+    if not SPECIALIST_MODELS_ENABLED:
+        # ignora dict do config.py E overrides de runtime — mesmo que
+        # alguém tenha editado config.py sem reiniciar, ou setado via API
+        # antes de a flag existir, desligado é desligado de verdade
+        return OLLAMA_MODEL
     return (
         _runtime_models.get(specialist)
         or SPECIALIST_MODELS.get(specialist, "")
@@ -28,6 +37,12 @@ def get_specialist_model(specialist: str) -> str:
 
 
 def set_specialist_model(specialist: str, model: str) -> None:
+    from config import SPECIALIST_MODELS_ENABLED
+    if not SPECIALIST_MODELS_ENABLED:
+        raise SpecialistModelsDisabledError(
+            "SPECIALIST_MODELS_ENABLED=False em config.py — bloqueado por hardware "
+            "(thrashing de VRAM com OLLAMA_MAX_LOADED_MODELS=1), ver comentário em config.py"
+        )
     _runtime_models[specialist] = model
     log.info("SPECIALIST MODEL: %s → %s", specialist, model)
 

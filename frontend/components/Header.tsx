@@ -853,12 +853,13 @@ type SpecialistEntry = { key: string; label: string; model: string }
 
 function SpecialistModelsModal({ models, onClose }: { models: string[]; onClose: () => void }) {
   const [specialists, setSpecialists] = useState<SpecialistEntry[]>([])
+  const [enabled, setEnabled] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
   const [error, setError] = useState(false)
 
   useEffect(() => {
     fetchSpecialistModels()
-      .then(d => setSpecialists(d.specialists))
+      .then(d => { setSpecialists(d.specialists); setEnabled(d.enabled) })
       .catch(() => setError(true))
   }, [])
 
@@ -880,6 +881,11 @@ function SpecialistModelsModal({ models, onClose }: { models: string[]; onClose:
         {error && (
           <p style={{ fontSize: '12px', color: '#f87171' }}>Erro ao carregar. Backend disponível?</p>
         )}
+        {!enabled && !error && (
+          <p style={{ fontSize: '12px', color: '#fbbf24', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)', borderRadius: 'var(--radius-sm)', padding: '8px 12px', lineHeight: 1.5 }}>
+            Desligado (SPECIALIST_MODELS_ENABLED=False em config.py) — bloqueado por hardware, troca de modelo por especialista causa thrashing de VRAM com GPU de 6GB. Todos usam o modelo principal.
+          </p>
+        )}
         {specialists.length === 0 && !error && (
           <div style={{ textAlign: 'center', padding: '16px' }}>
             <Loader2 size={18} style={{ color: 'var(--accent)', animation: 'spin 1s linear infinite', margin: '0 auto' }} />
@@ -893,12 +899,12 @@ function SpecialistModelsModal({ models, onClose }: { models: string[]; onClose:
             <select
               value={s.model}
               onChange={e => handleChange(s.key, e.target.value)}
-              disabled={saving === s.key}
+              disabled={saving === s.key || !enabled}
               style={{
                 ...inputStyle,
                 fontSize: '12px',
                 padding: '6px 10px',
-                opacity: saving === s.key ? 0.6 : 1,
+                opacity: (saving === s.key || !enabled) ? 0.6 : 1,
               }}
             >
               {models.map(m => (

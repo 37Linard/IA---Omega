@@ -85,6 +85,7 @@ export async function fetchSandboxStatus(): Promise<{
 }
 
 export async function fetchSpecialistModels(): Promise<{
+  enabled: boolean
   specialists: Array<{ key: string; label: string; model: string }>
 }> {
   return req('/specialist-models')

@@ -32,6 +32,13 @@ API_URL        = "http://localhost:8000"  # URL base da API (usada por tools pra
 # ── Specialist models (opcional) ───────────────────────────────────────────
 # Deixe vazio ("") para herdar OLLAMA_MODEL
 MANAGER_MODEL: str = ""  # modelo pra roteamento/classificação — vazio = OLLAMA_MODEL
+
+# Desligado por padrão — só ative se sua GPU aguenta mais de 1 modelo
+# residente na VRAM ao mesmo tempo (senão o Ollama fica trocando modelo a
+# cada especialista diferente, thrashing). Com OLLAMA_MAX_LOADED_MODELS=1
+# (recomendado pra GPU de 6GB, ver seção de instalação) isso piora a
+# performance em vez de ajudar.
+SPECIALIST_MODELS_ENABLED: bool = False
 SPECIALIST_MODELS: dict = {
     # "pesquisador": "llama3.2:3b",
     # "codigo":      "qwen2.5-coder:7b",

@@ -497,9 +497,11 @@ async def get_template(template_id: str):
 
 @app.get("/specialist-models")
 async def get_specialist_models():
+    from config import SPECIALIST_MODELS_ENABLED
     from orchestrator import list_specialist_models, SPECIALISTS
     models_data = list_specialist_models()
     return {
+        "enabled": SPECIALIST_MODELS_ENABLED,
         "specialists": [
             {"key": k, "label": SPECIALISTS[k]["label"], "model": models_data[k]}
             for k in SPECIALISTS
@@ -509,14 +511,17 @@ async def get_specialist_models():
 
 @app.post("/specialist-models")
 async def post_specialist_model(body: dict, _rl=Depends(_check_rate_limit)):
-    from orchestrator import SPECIALISTS, set_specialist_model
+    from orchestrator import SPECIALISTS, SpecialistModelsDisabledError, set_specialist_model
     specialist = body.get("specialist", "").strip()
     model      = body.get("model", "").strip()
     if specialist not in SPECIALISTS:
         raise HTTPException(status_code=400, detail=f"Especialista '{specialist}' desconhecido")
     if not model:
         raise HTTPException(status_code=400, detail="model obrigatório")
-    set_specialist_model(specialist, model)
+    try:
+        set_specialist_model(specialist, model)
+    except SpecialistModelsDisabledError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"specialist": specialist, "model": model}
 
 
