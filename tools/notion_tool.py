@@ -74,7 +74,7 @@ class NotionTool:
             title   = input_data.get("title", "Nova página")
             content = input_data.get("content", "")
 
-            body = {
+            body: dict = {
                 "parent": {"database_id": db_id},
                 "properties": {
                     "Name": {"title": [{"text": {"content": title}}]}

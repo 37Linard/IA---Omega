@@ -65,6 +65,7 @@ class FetchPageTool:
         except requests.Timeout:
             return "Erro: página não respondeu em 15 segundos."
         except requests.HTTPError as e:
-            return f"Erro HTTP {e.response.status_code}: {url}"
+            status = e.response.status_code if e.response is not None else "?"
+            return f"Erro HTTP {status}: {url}"
         except Exception as e:
             return f"Erro ao acessar página: {str(e)}"

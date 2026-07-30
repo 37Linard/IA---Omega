@@ -92,7 +92,7 @@ class GetCryptoTool:
             return "\n".join(lines)
 
         except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
+            if e.response is not None and e.response.status_code == 404:
                 return f"Erro: moeda '{symbol}' não encontrada. Use nome completo: 'bitcoin', 'ethereum', etc."
             return f"Erro HTTP: {e}"
         except Exception as e:

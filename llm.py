@@ -93,7 +93,7 @@ class OllamaLLM:
         return {"prompt_tokens": prompt_count, "completion_tokens": eval_count, "tps": tps}
 
     def _request(self, model: str, prompt: str, options: dict, on_token) -> tuple[str, dict]:
-        payload = {
+        payload: dict = {
             "model": model,
             "prompt": prompt,
             "stream": on_token is not None,
@@ -186,7 +186,7 @@ class OllamaLLM:
     def generate_vision(self, prompt: str, image_b64: str, model: str = "") -> str:
         """Analisa imagem com modelo multimodal."""
         vision_model = model or VISION_MODEL
-        payload = {
+        payload: dict = {
             "model":      vision_model,
             "prompt":     prompt,
             "images":     [image_b64],
