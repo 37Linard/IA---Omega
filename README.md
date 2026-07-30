@@ -353,6 +353,7 @@ Notificação via Discord — reusa o mesmo webhook do `discord_notify_tool.py`:
 - **Circuit breaker** — para de tentar tool quebrada repetidamente; alerta de taxa de erro alta no Dashboard
 - **Export de dados** — `GET /export/data` baixa um zip com tudo que o agente guarda de você: `agent_memory.json` (facts/sessions/episódios/knowledge graph) + `conversas/*.md` (uma nota por sessão). Protegido por `AUTH_PASSWORD` igual `/history` quando ativa
 - **Eval harness + git hook pre-push** — golden tasks rodam contra o agente real (Ollama) automaticamente antes de permitir push
+- **Rollback de `write_file`** — sobrescrever tira snapshot do conteúdo anterior antes (`workspace/.file_snapshots/`, até 10 por arquivo). `action: 'restore'` desfaz a última escrita (e o próprio restore também é desfazível); `action: 'list_snapshots'` lista as versões disponíveis
 
 > ⚠️ **Não commite** `gdrive_credentials.json`, `gdrive_token.json`, `workspace/` ou `agent_memory.json` — esses arquivos contêm dados pessoais e tokens OAuth.
 
