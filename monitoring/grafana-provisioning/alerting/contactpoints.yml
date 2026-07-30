@@ -1,0 +1,17 @@
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: discord
+    receivers:
+      - uid: ia-discord-webhook
+        type: discord
+        settings:
+          # Lido do env do container Grafana (docker-compose.yml passa
+          # DISCORD_WEBHOOK_URL do .env do host) — nunca hardcoded aqui,
+          # mesmo padrão de config.py (gitignored, nunca no git). Se vazio,
+          # o contact point existe mas falha ao enviar — não quebra o
+          # provisioning, só fica sem notificar até você configurar.
+          url: $__env{DISCORD_WEBHOOK_URL}
+          use_discord_username: true
+        disableResolveMessage: false

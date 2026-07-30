@@ -309,6 +309,30 @@ npm run test:e2e:ui       # modo interativo (Playwright UI)
 
 ---
 
+## 📊 Observabilidade (Prometheus + Grafana)
+
+Opcional — o `/metrics` (JSON, usado pelo Dashboard de Performance do frontend) já cobre o snapshot atual sem nenhum container extra. Prometheus/Grafana servem pra ver os mesmos agregados **ao longo do tempo** + alertar sozinho.
+
+```bash
+docker compose up -d prometheus grafana
+# Grafana: http://localhost:3001 (admin/admin — troque via GRAFANA_ADMIN_PASSWORD no .env)
+# dashboard "Agente IA Local" já vem provisionado — TPS/TTFT/contexto/VRAM,
+# taxa de sucesso por tool, taxa de erro por modelo, reflection, circuit
+# breakers abertos, knowledge graph
+```
+
+**Alertas** (`monitoring/grafana-provisioning/alerting/`) — mesmos thresholds já usados no Header.tsx do frontend, não inventei número novo:
+- Circuit breaker aberto pra qualquer tool
+- Taxa de sucesso de tool < 70% (mín. 3 chamadas, janela 7 dias)
+- Taxa de erro de modelo LLM > 20% (mín. 3 chamadas, janela 24h)
+- VRAM > 90% por mais de 5min
+
+Notificação via Discord — reusa o mesmo webhook do `discord_notify_tool.py`: adicione `DISCORD_WEBHOOK_URL=...` no `.env` do projeto (mesmo arquivo que já serve `JWT_SECRET`/`GRAFANA_ADMIN_PASSWORD` pro compose) e reinicie o Grafana. Sem isso, os alertas disparam e aparecem normal na aba Alerting do Grafana — só não chegam no Discord.
+
+> ⚠️ **Achado real testando**: contact point do Discord com URL vazia **derruba o container Grafana inteiro** no boot (falha de validação do provisioning, não é só "não notifica"). O default em `docker-compose.yml` usa um placeholder não-vazio de propósito — nunca deixe `DISCORD_WEBHOOK_URL` vazio no `.env`, ou remova a linha inteira pra usar o placeholder.
+
+---
+
 ## 🔒 Segurança e Privacidade
 
 - **Zero dados externos** — nenhuma chamada para OpenAI, Anthropic ou qualquer API de IA

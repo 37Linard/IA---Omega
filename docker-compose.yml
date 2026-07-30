@@ -49,6 +49,13 @@ services:
       - grafana_data:/var/lib/grafana
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      # lido pelo contact point Discord via $__env{} — mesmo webhook do
+      # discord_notify_tool.py. ACHADO REAL testando: string vazia aqui
+      # derruba o container inteiro (Grafana valida "url presente" no
+      # load do provisioning, antes mesmo de tentar enviar nada) — default
+      # é um placeholder não-vazio, só falha no ENVIO (logado, sem crash)
+      # até você setar o real no .env.
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-https://discord.com/api/webhooks/000000000000000000/configure-me}
     depends_on:
       - prometheus
     restart: unless-stopped

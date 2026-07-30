@@ -2,6 +2,7 @@ apiVersion: 1
 
 datasources:
   - name: Prometheus
+    uid: prometheus_ia   # fixo — dashboard/alertas provisionados referenciam por este uid, não por nome
     type: prometheus
     access: proxy
     url: http://prometheus:9090

@@ -1,0 +1,160 @@
+{
+  "id": null,
+  "uid": "agente-ia-local",
+  "title": "Agente IA Local",
+  "tags": ["agente-ia"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    { "type": "row", "title": "Inferência", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "id": 100, "collapsed": false, "panels": [] },
+    {
+      "id": 1, "type": "stat", "title": "TPS (tokens/s)", "gridPos": { "h": 6, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus_ia" },
+      "targets": [{ "expr": "ia_inference_tps", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 1 }, "overrides": [] }
+    },
+    {
+      "id": 2, "type": "stat", "title": "TTFT (ms)", "gridPos": { "h": 6, "w": 6, "x": 6, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus_ia" },
+      "targets": [{ "expr": "ia_inference_ttft_ms", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] }
+    },
+    {
+      "id": 3, "type": "gauge", "title": "Uso do contexto",
+      "description": "Alerta visual em >80% — mesmo threshold do dashboard do frontend (HealthModal)",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus_ia" },
+      "targets": [{ "expr": "ia_inference_context_pct", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 80 },
+            { "color": "red", "value": 95 }
+          ] }
+        }, "overrides": []
+      }
+    },
+    {
+      "id": 4, "type": "gauge", "title": "VRAM usada",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus_ia" },
+      "targets": [{ "expr": "ia_vram_pct", "refId": "A" }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "min": 0, "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 80 },
+            { "color": "red", "value": 95 }
+          ] }
+        }, "overrides": []
+      }
+    },
+
+    { "type": "row", "title": "Ferramentas (7 dias)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 }, "id": 101, "collapsed": false, "panels": [] },
+    {
+      "id": 5, "type": "table", "title": "Taxa de sucesso por ferramenta",
+      "description": "Alerta em <70% de sucesso — mesmo threshold do Header.tsx (ALERT_MIN_CALLS=3)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus_ia" },
+      "targets": [
+        { "expr": "ia_tool_calls", "refId": "A", "format": "table", "instant": true },
+        { "expr": "ia_tool_success_rate_percent", "refId": "B", "format": "table", "instant": true },
+        { "expr": "ia_tool_avg_duration_ms", "refId": "C", "format": "table", "instant": true }
+      ],
+      "transformations": [{ "id": "merge", "options": {} }],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Value #B" }, "properties": [
+            { "id": "unit", "value": "percent" },
+            { "id": "thresholds", "value": { "mode": "absolute", "steps": [
+              { "color": "red", "value": null }, { "color": "yellow", "value": 70 }, { "color": "green", "value": 90 }
+            ] } },
+            { "id": "custom.cellOptions", "value": { "type": "color-background" } }
+          ] }
+        ]
+      }
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Taxa de sucesso por ferramenta ao longo do tempo",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus_ia" },
+      "targets": [{ "expr": "ia_tool_success_rate_percent", "legendFormat": "{{tool}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 }, "overrides": [] }
+    },
+
+    { "type": "row", "title": "LLM (24h)", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 }, "id": 102, "collapsed": false, "panels": [] },
+    {
+      "id": 7, "type": "table", "title": "Chamadas por modelo",
+      "description": "Alerta em >20% de erro — mesmo threshold do Header.tsx (ALERT_MIN_CALLS=3)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "datasource": { "type": "prometheus", "uid": "prometheus_ia" },
+      "targets": [
+        { "expr": "ia_llm_calls", "refId": "A", "format": "table", "instant": true },
+        { "expr": "ia_llm_error_rate_percent", "refId": "B", "format": "table", "instant": true },
+        { "expr": "ia_llm_fallbacks", "refId": "C", "format": "table", "instant": true },
+        { "expr": "ia_llm_avg_tps", "refId": "D", "format": "table", "instant": true }
+      ],
+      "transformations": [{ "id": "merge", "options": {} }],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Value #B" }, "properties": [
+            { "id": "unit", "value": "percent" },
+            { "id": "thresholds", "value": { "mode": "absolute", "steps": [
+              { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 20 }
+            ] } },
+            { "id": "custom.cellOptions", "value": { "type": "color-background" } }
+          ] }
+        ]
+      }
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Taxa de erro por modelo ao longo do tempo",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "datasource": { "type": "prometheus", "uid": "prometheus_ia" },
+      "targets": [{ "expr": "ia_llm_error_rate_percent", "legendFormat": "{{model}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0 }, "overrides": [] }
+    },
+
+    { "type": "row", "title": "Reflection, Circuit Breaker e Knowledge Graph", "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 }, "id": 103, "collapsed": false, "panels": [] },
+    {
+      "id": 9, "type": "stat", "title": "Taxa de reescrita (reflection)",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 26 },
+      "datasource": { "type": "prometheus", "uid": "prometheus_ia" },
+      "targets": [{ "expr": "ia_reflection_rewrite_rate_percent", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] }
+    },
+    {
+      "id": 10, "type": "stat", "title": "Score médio (reflection)",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 26 },
+      "datasource": { "type": "prometheus", "uid": "prometheus_ia" },
+      "targets": [{ "expr": "ia_reflection_avg_score", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "short", "max": 5, "min": 1 }, "overrides": [] }
+    },
+    {
+      "id": 11, "type": "table", "title": "Circuit breakers abertos",
+      "description": "Só mostra linhas com valor 1 (aberto) — ver alerta correspondente",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 26 },
+      "datasource": { "type": "prometheus", "uid": "prometheus_ia" },
+      "targets": [{ "expr": "ia_circuit_breaker_open == 1", "refId": "A", "format": "table", "instant": true }],
+      "fieldConfig": { "defaults": {}, "overrides": [] }
+    },
+    {
+      "id": 12, "type": "stat", "title": "Knowledge Graph",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 26 },
+      "datasource": { "type": "prometheus", "uid": "prometheus_ia" },
+      "targets": [
+        { "expr": "ia_kg_entities", "legendFormat": "entidades", "refId": "A" },
+        { "expr": "ia_kg_relations", "legendFormat": "relações", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    }
+  ]
+}
