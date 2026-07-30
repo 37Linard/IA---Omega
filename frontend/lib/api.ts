@@ -26,7 +26,11 @@ export async function setModel(model: string): Promise<void> {
   return req('/model', { method: 'POST', body: JSON.stringify({ model }) })
 }
 
-export async function fetchHealth() {
+export async function fetchHealth(): Promise<{
+  ollama: unknown
+  gpu: unknown
+  security: { warnings: string[] }
+}> {
   return req('/health')
 }
 

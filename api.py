@@ -14,7 +14,7 @@ import voice
 import logging
 import threading
 from config import OLLAMA_MODEL, OLLAMA_URL, TASK_TIMEOUT, AUTH_PASSWORD, JWT_SECRET, SCHEDULED_TASKS, RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW, NIGHTLY_EVAL_ENABLED, NIGHTLY_EVAL_HOUR, NIGHTLY_EVAL_MINUTE
-from health_checks import jwt_secret_warning
+from health_checks import jwt_secret_warning, remote_access_warning
 import auth as _auth
 import scheduler as _scheduler
 import watcher as _watcher
@@ -70,6 +70,29 @@ def check_auth(credentials: HTTPBasicCredentials = Depends(_security)):
         credentials.password.encode(), AUTH_PASSWORD.encode()
     ):
         raise HTTPException(status_code=401, headers={"WWW-Authenticate": "Basic"})
+
+_remote_warning = remote_access_warning(AUTH_PASSWORD)
+if _remote_warning:
+    # --host 0.0.0.0 (padrão dos .bat) já alcança LAN/Tailscale, não só
+    # localhost. print() de propósito, não logging.warning() — achado real
+    # testando: _FrontendLogHandler (linha ~48) já registra handler no
+    # root logger (buffer em memória pro /logs do frontend), isso desliga
+    # o fallback padrão do Python que jogaria WARNING sem handler pro
+    # stderr. logging.warning() aqui ficaria só no buffer, invisível no
+    # terminal de quem roda iniciar_frontend.bat — exatamente quem precisa ver.
+    #
+    # Achado real #2: "⚠" quebra o print() inteiro (UnicodeEncodeError,
+    # derruba a aplicação no import) se o console não tiver
+    # PYTHONIOENCODING=utf-8 setado — os .bat setam, rodar uvicorn direto
+    # não. try/except aqui é a única linha de defesa contra crashar o
+    # processo inteiro só por causa de um caractere num aviso.
+    try:
+        print(f"\n{'=' * 70}\nAVISO DE SEGURANCA: {_remote_warning}\n{'=' * 70}\n")
+    except UnicodeEncodeError:
+        print("\n" + "=" * 70)
+        print("AVISO DE SEGURANCA: AUTH_PASSWORD vazia - acesso remoto sem senha.")
+        print("Configure AUTH_PASSWORD em config.py antes de expor via Tailscale/LAN.")
+        print("=" * 70 + "\n")
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -250,10 +273,13 @@ async def get_health():
                "power_limit": p[6] if len(p) > 6 else "N/A"}
     except Exception:
         gpu = {}
-    security = {}
-    warning = jwt_secret_warning(AUTH_PASSWORD, JWT_SECRET)
-    if warning:
-        security["warning"] = warning
+    warnings = [
+        w for w in (
+            remote_access_warning(AUTH_PASSWORD),
+            jwt_secret_warning(AUTH_PASSWORD, JWT_SECRET),
+        ) if w
+    ]
+    security = {"warnings": warnings}
     return {"ollama": ollama, "gpu": gpu, "security": security}
 
 

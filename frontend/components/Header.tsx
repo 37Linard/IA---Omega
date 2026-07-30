@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Menu, Sun, Moon, User, Heart, Cpu, Database, Trash2, FolderOpen, RefreshCw, CheckCircle, XCircle, Loader2, Layers, GitGraph, LayoutGrid, Workflow, Download } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
-import { fetchModels, setModel, fetchProfile, saveProfile, fetchRagDocs, ragIndexFolder, ragDeleteDoc, uploadFile, fetchMetrics, fetchSandboxStatus, fetchSpecialistModels, setSpecialistModel, exportConversation } from '@/lib/api'
+import { fetchModels, setModel, fetchProfile, saveProfile, fetchRagDocs, ragIndexFolder, ragDeleteDoc, uploadFile, fetchMetrics, fetchSandboxStatus, fetchSpecialistModels, setSpecialistModel, exportConversation, fetchHealth } from '@/lib/api'
 import { ThoughtTree } from './ThoughtTree'
 import { WorkflowDAG } from './WorkflowDAG'
 import type { UserProfile } from '@/lib/types'
@@ -340,13 +340,15 @@ type SandboxStatus = { mode: 'wasm' | 'docker' | 'local'; docker: boolean; image
 function HealthModal({ onClose }: { onClose: () => void }) {
   const [metrics, setMetrics] = useState<Metrics | null>(null)
   const [sandbox, setSandbox] = useState<SandboxStatus | null>(null)
+  const [securityWarnings, setSecurityWarnings] = useState<string[]>([])
   const [error, setError] = useState(false)
 
   const load = useCallback(async () => {
     try {
-      const [m, s] = await Promise.all([fetchMetrics(), fetchSandboxStatus()])
+      const [m, s, h] = await Promise.all([fetchMetrics(), fetchSandboxStatus(), fetchHealth()])
       setMetrics(m)
       setSandbox(s)
+      setSecurityWarnings(h.security.warnings)
       setError(false)
     }
     catch { setError(true) }
@@ -404,6 +406,20 @@ function HealthModal({ onClose }: { onClose: () => void }) {
         <div style={{ overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
           {error && (
             <p style={{ fontSize: '13px', color: '#f87171', textAlign: 'center' }}>Backend indisponível</p>
+          )}
+
+          {/* Segurança — AUTH_PASSWORD/JWT_SECRET, relevante pra acesso remoto (Tailscale/LAN) */}
+          {securityWarnings.length > 0 && (
+            <div>
+              <p style={{ fontSize: '12px', fontWeight: 500, color: '#f87171', marginBottom: '10px', letterSpacing: '0.05em' }}>⚠ SEGURANÇA</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {securityWarnings.map((w, i) => (
+                  <p key={i} style={{ fontSize: '12px', color: '#f87171', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: '6px', padding: '8px 12px', lineHeight: 1.5, margin: 0 }}>
+                    {w}
+                  </p>
+                ))}
+              </div>
+            </div>
           )}
 
           {/* Circuit breaker — só aparece quando alguma tool está desabilitada */}

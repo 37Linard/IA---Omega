@@ -14,3 +14,21 @@ def jwt_secret_warning(auth_password: str, jwt_secret: str) -> str:
             "forjáveis (assinados com segredo vazio). Defina JWT_SECRET via env var."
         )
     return ""
+
+
+def remote_access_warning(auth_password: str) -> str:
+    """`--host 0.0.0.0` (padrão dos .bat) já deixa a API alcançável por
+    qualquer dispositivo na LAN ou tailnet (Tailscale) — não só localhost.
+    Sem AUTH_PASSWORD, qualquer um nessa rede tem acesso total (terminal,
+    arquivos, e-mail, etc. — tools "destructive" inteiras). Não tem como
+    checar o bind real daqui dentro (uvicorn recebe --host fora do app),
+    então avisa sempre que estiver vazia — melhor aviso de sobra numa
+    instalação 100% localhost do que silêncio numa exposta de verdade."""
+    if not auth_password:
+        return (
+            "AUTH_PASSWORD vazia — se você expõe essa API além de localhost "
+            "(Tailscale, LAN), qualquer dispositivo nessa rede tem acesso total "
+            "ao agente sem senha nenhuma. Configure AUTH_PASSWORD em config.py "
+            "antes de acessar remoto."
+        )
+    return ""

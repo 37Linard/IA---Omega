@@ -358,6 +358,35 @@ Notificação via Discord — reusa o mesmo webhook do `discord_notify_tool.py`:
 
 ---
 
+## 🌐 Acesso Remoto Seguro (Tailscale)
+
+`--host 0.0.0.0` (padrão dos `.bat`) já deixa a API alcançável por qualquer dispositivo na sua rede — Tailscale só estende essa mesma rede pra fora de casa, via VPN mesh criptografada ponto-a-ponto, sem abrir porta nenhuma no roteador.
+
+### Setup
+
+1. [tailscale.com/download](https://tailscale.com/download) — instala + `tailscale up` (abre o browser pra logar; escolhe a conta que quer usar como identidade do tailnet)
+2. Repete nos outros dispositivos que vão acessar (celular, notebook) — mesma conta/tailnet
+3. Ative o MagicDNS no [admin console](https://login.tailscale.com/admin/dns) — dá nome estável tipo `meu-pc.tailnet-nome.ts.net` em vez de IP `100.x.x.x` que muda
+
+### HTTPS de verdade (não pule isso)
+
+```bash
+tailscale serve --bg http://localhost:8000
+```
+
+Isso publica `https://<seu-dispositivo>.<tailnet>.ts.net` com certificado TLS válido (Let's Encrypt via Tailscale, automático) — **só dentro do seu tailnet**, não da internet pública. Sem isso, acessar via `http://100.x.x.x:8000` puro funciona pra chat/texto, mas o **modo voz quebra** — browsers bloqueiam `getUserMedia` (microfone) fora de contexto seguro (HTTPS ou localhost), e o app usa isso pro STT.
+
+> ⚠️ **NUNCA use `tailscale funnel`** pra este projeto — `serve` fica só dentro do seu tailnet (privado, o que você quer), `funnel` publica na **internet pública** (o oposto do "100% local/privado" que o projeto inteiro é desenhado pra ser).
+
+### Antes de acessar remoto — checklist
+
+- [ ] `AUTH_PASSWORD` configurada em `config.py` (vazio = qualquer dispositivo no seu tailnet tem acesso total sem senha — o app agora **avisa isso no terminal ao subir** e no Dashboard de Performance, ⚠ SEGURANÇA, se ainda estiver vazia)
+- [ ] `JWT_SECRET` configurada (senão os tokens JWT ficam forjáveis mesmo com senha — mesmo aviso, checado junto)
+- [ ] `tailscale serve` rodando (HTTPS, não HTTP puro)
+- [ ] **Nunca** `tailscale funnel`
+
+---
+
 ## 🗺️ Arquitetura
 
 ```
