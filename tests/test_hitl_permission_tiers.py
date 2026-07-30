@@ -84,7 +84,7 @@ def test_hitl_gate_emits_risk_tier_and_respects_approval():
     registry = agent_mod._HITL_REGISTRY
     a = ReActAgent.__new__(ReActAgent)
     a._cancel = threading.Event()
-    emitted = []
+    emitted: list = []
     a._emit = emitted.append
 
     result_box = {}

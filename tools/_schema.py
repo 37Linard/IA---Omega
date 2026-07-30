@@ -18,7 +18,7 @@ Formato de TOOL_SCHEMAS[tool]:
                       pra 'action' (branch teria que existir pra validar).
 """
 
-TOOL_SCHEMAS = {
+TOOL_SCHEMAS: dict[str, dict] = {
     "remember_fact":    {"required": ["fact"]},
     "save_note":        {"required": ["title", "content"]},
     "http_request":     {"required": ["url"]},

@@ -21,7 +21,7 @@ def test_read_empty_clipboard(monkeypatch):
 
 def test_write_copies_text(monkeypatch):
     import pyperclip
-    captured = {}
+    captured: dict = {}
     monkeypatch.setattr(pyperclip, "copy", lambda text: captured.setdefault("text", text))
 
     result = ClipboardTool().run({"action": "write", "text": "novo conteudo"})

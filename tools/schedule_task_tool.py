@@ -79,8 +79,11 @@ class ScheduleTaskTool:
         task_desc = (input_data.get("task") or "").strip()
         if not task_desc:
             return "Erro: 'task' obrigatório — descreva o que deve ser executado todo dia."
+        hour_raw = input_data.get("hour")
+        if hour_raw is None:
+            return "Erro: 'hour' (0-23) obrigatório e numérico."
         try:
-            hour   = int(input_data.get("hour"))
+            hour   = int(hour_raw)
             minute = int(input_data.get("minute", 0))
         except (TypeError, ValueError):
             return "Erro: 'hour' (0-23) obrigatório e numérico."

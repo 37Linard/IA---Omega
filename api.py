@@ -34,7 +34,7 @@ def _check_rate_limit(request: Request):
     _rl_buckets[ip].append(now)
 
 # Buffer de logs para o frontend
-_log_buffer = deque(maxlen=200)
+_log_buffer: deque[dict] = deque(maxlen=200)
 
 class _FrontendLogHandler(logging.Handler):
     def emit(self, record):
@@ -602,7 +602,7 @@ async def update_profile(body: dict, _rl=Depends(_check_rate_limit)):
     from user_profile import UserProfile
     p = UserProfile()
     allowed = {"name", "tech_level", "tone", "language"}
-    updates = {k: v for k, v in body.items() if k in allowed and isinstance(v, str)}
+    updates: dict[str, str | bool] = {k: v for k, v in body.items() if k in allowed and isinstance(v, str)}
     if "tech_level" in updates and updates["tech_level"] != p.data.get("tech_level"):
         # escolha manual do usuário — para de sobrescrever com auto-detecção
         updates["tech_level_auto"] = False
@@ -653,7 +653,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
 
             loop = asyncio.get_running_loop()
-            queue = asyncio.Queue()
+            queue: asyncio.Queue[dict] = asyncio.Queue()
             agent.reset_cancel()
 
             def sync_callback(step_data):

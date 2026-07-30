@@ -7,6 +7,7 @@ import sys
 import threading
 import concurrent.futures
 from datetime import datetime
+from typing import Callable
 import time
 
 if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
@@ -171,15 +172,15 @@ class ReActAgent:
         self.llm                 = llm
         self._primary_llm        = llm  # default seguro pra quem usa a instância sem passar por run() — run() reatribui no início de qualquer forma
         self.tools               = {t.name: t for t in tools} if isinstance(tools, list) else tools
-        self.scratchpad          = []
+        self.scratchpad: list[str] = []
         self.memory              = memory if memory is not None else Memory()
         self.profile             = UserProfile()
         self._cancel             = threading.Event()
         self._cancel_reason      = "usuário"
-        self.conversation        = []  # [{task, result}, ...]
+        self.conversation: list[dict] = []  # [{task, result}, ...]
         self.specialist_context  = specialist_context
         self.session_id          = session_id
-        self._emit               = None  # set at run() start — used by HITL gate
+        self._emit: Callable[[dict], None] | None = None  # set at run() start — used by HITL gate
         self.allow_ensemble_swap = allow_ensemble_swap  # False p/ especialistas colaborativos (paralelos) — evita threads concorrentes trocando modelo ao mesmo tempo (OLLAMA_MAX_LOADED_MODELS=1 força thrashing de VRAM se isso acontecer)
 
     def _log_error(self, task: str, error_type: str, details: str):
@@ -821,7 +822,7 @@ class ReActAgent:
     def run(self, task: str, max_steps: int = MAX_STEPS, step_callback=None) -> str:
         self.scratchpad  = []
         self._tool_calls = 0
-        self._reflection_candidates = []   # [(score, answer, model), ...] — self-consistency (ensemble/voto)
+        self._reflection_candidates: list[tuple] = []   # [(score, answer, model), ...] — self-consistency (ensemble/voto)
         self._primary_llm = self.llm       # modelo principal da sessão — self.llm pode trocar durante o ensemble, isso nunca muda
         try:
             log.info("TAREFA: %s", task)

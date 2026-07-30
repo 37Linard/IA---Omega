@@ -4,6 +4,7 @@ import logging
 import os
 import pickle
 import re
+from typing import Callable
 
 log = logging.getLogger(__name__)
 
@@ -131,7 +132,7 @@ class RAGIndex:
     def __init__(self):
         os.makedirs(RAG_DIR, exist_ok=True)
         self._ok       = False
-        self._embed_fn = None
+        self._embed_fn: Callable[[list[str]], list] | None = None
         try:
             import vector_store
             from embeddings import get_embedder
@@ -149,6 +150,7 @@ class RAGIndex:
     def _upsert_chunks(self, ids: list[str], docs: list[str], metas: list[dict]):
         if not self._ok:
             return
+        assert self._embed_fn is not None  # garantido por self._ok
         batch = 100
         for i in range(0, len(ids), batch):
             batch_docs = docs[i:i + batch]
@@ -260,6 +262,7 @@ class RAGIndex:
             total = self._collection.count()
             if total > 0:
                 k = min(candidate_n, total)
+                assert self._embed_fn is not None  # garantido por self._ok
                 try:
                     vec = self._embed_fn([query])[0]
                     hits = self._collection.query(vec, k, file=file_filter)

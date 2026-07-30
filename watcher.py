@@ -5,6 +5,7 @@ import time
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
+from watchdog.observers.api import BaseObserver
 
 log = logging.getLogger(__name__)
 
@@ -62,7 +63,7 @@ def _debounce_loop():
                 log.warning("WATCHER: erro ao indexar %s — %s", fname, e)
 
 
-_observer: Observer | None = None
+_observer: BaseObserver | None = None
 
 
 def start():

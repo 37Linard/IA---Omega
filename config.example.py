@@ -95,7 +95,7 @@ RATE_LIMIT_REQUESTS = 60
 RATE_LIMIT_WINDOW   = 60
 
 # ── Tarefas agendadas ─────────────────────────────────────────────────────
-SCHEDULED_TASKS = [
+SCHEDULED_TASKS: list[dict] = [
     # {"label": "Notícias", "task": "pesquise notícias de tech hoje", "hour": 8, "minute": 0},
 ]
 
@@ -161,7 +161,7 @@ PLUGINS_ENABLED = False
 # padrao: nao existe um registry "oficial" centralizado desse projeto (e
 # pessoal/local) -- so pesquisa registries que VOCE adicionou aqui, igual
 # TRUSTED_AUTHORS em plugins/trusted_authors.json. Ver plugins_registry.example.json.
-PLUGIN_REGISTRY_URLS = []
+PLUGIN_REGISTRY_URLS: list[str] = []
 
 # ── Human-in-the-Loop — permissão em camadas por risco (opcional) ──────────
 # read: só lê. write: muda estado local (reversível). destructive: efeito

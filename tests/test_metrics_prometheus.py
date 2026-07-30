@@ -54,7 +54,7 @@ def test_render_circuit_breaker_open_as_zero_or_one():
 
 
 def test_render_skips_missing_data_without_crashing():
-    empty = {"inference": {}, "tools": [], "llm_calls": [], "reflection": {},
+    empty: dict = {"inference": {}, "tools": [], "llm_calls": [], "reflection": {},
               "circuit_breaker": [], "knowledge_graph": {}, "vram": {}}
 
     text = render_metrics(empty)

@@ -8,7 +8,7 @@ from config import OLLAMA_URL, NUM_PREDICT, NUM_CTX, NUM_GPU, TEMPERATURE, VISIO
 log = logging.getLogger(__name__)
 
 
-def _trace(kind: str, model: str, t0: float, call_stats: dict = None, *,
+def _trace(kind: str, model: str, t0: float, call_stats: dict | None = None, *,
            success: bool = True, error: str = "", fallback_used: bool = False,
            prompt_preview: str = ""):
     """Grava um span (tracing.py). Chamada por valor/retorno, nunca por atributo
@@ -50,7 +50,7 @@ def unload_all_models():
 
 
 class OllamaLLM:
-    def __init__(self, model: str = "qwen2.5:7b", fallback_model: str = None):
+    def __init__(self, model: str = "qwen2.5:7b", fallback_model: str | None = None):
         self.model          = model
         self.base_url       = OLLAMA_URL
         self.fallback_model = FALLBACK_MODEL if fallback_model is None else fallback_model
@@ -213,6 +213,8 @@ class OllamaLLM:
             except requests.HTTPError as e:
                 _trace("generate_vision", vision_model, t0, success=False, error=str(e), prompt_preview=prompt[:150])
                 raise RuntimeError(f"Erro Ollama vision: {e}") from e
+
+        raise RuntimeError(f"Ollama vision não respondeu após {MAX_RETRIES} tentativas.")
 
 
 class OllamaEmbeddingFunction:

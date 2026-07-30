@@ -21,7 +21,7 @@ def _make(events):
 
 
 def test_plain_thought_streams_as_generic_token():
-    events = []
+    events: list = []
     cb, final_started, action_started = _make(events)
 
     _feed(cb, "Thought: preciso pensar mais um pouco antes de decidir\n")
@@ -32,7 +32,7 @@ def test_plain_thought_streams_as_generic_token():
 
 
 def test_final_answer_streams_to_final_box_not_action():
-    events = []
+    events: list = []
     cb, final_started, action_started = _make(events)
 
     _feed(cb, "Thought: pronto.\nFinal Answer: a resposta é 42")
@@ -47,7 +47,7 @@ def test_final_answer_streams_to_final_box_not_action():
 
 
 def test_action_name_streams_as_soon_as_line_completes():
-    events = []
+    events: list = []
     cb, final_started, action_started = _make(events)
 
     _feed(cb, "Thought: vou usar uma ferramenta.\nAction: get_crypto\n")
@@ -60,7 +60,7 @@ def test_action_name_streams_as_soon_as_line_completes():
 
 
 def test_action_input_json_streams_incrementally_after_marker():
-    events = []
+    events: list = []
     cb, final_started, action_started = _make(events)
 
     _feed(cb, 'Thought: ok.\nAction: get_crypto\nAction Input: {"symbol": "bitcoin"}')
@@ -80,7 +80,7 @@ def test_action_input_json_streams_incrementally_after_marker():
 
 
 def test_action_start_fires_only_once_even_with_char_by_char_feed():
-    events = []
+    events: list = []
     cb, final_started, action_started = _make(events)
 
     _feed(cb, 'Action: write_file\nAction Input: {"path": "a.txt", "content": "oi"}')
@@ -94,7 +94,7 @@ def test_final_answer_wins_when_action_word_appears_after_it():
     aparecer DEPOIS de 'Final Answer:' no texto (ex: resposta explicando o
     formato ReAct), continua sendo tratado como final, não dispara streaming
     de tool-call por engano."""
-    events = []
+    events: list = []
     cb, final_started, action_started = _make(events)
 
     _feed(cb, "Thought: ok.\nFinal Answer: no ReAct você escreve Action: nome_da_tool")

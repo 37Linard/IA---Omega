@@ -25,6 +25,9 @@ jobs:
       - name: Config de teste
         run: cp config.example.py config.py
 
+      - name: Type check (mypy)
+        run: mypy .
+
       - name: Roda testes (com gate de cobertura, ver pytest.ini --cov-fail-under)
         run: pytest
 

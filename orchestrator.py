@@ -3,8 +3,12 @@ import json
 import logging
 import re
 import threading
+from typing import TYPE_CHECKING
 
 from memory import Memory
+
+if TYPE_CHECKING:
+    from agent import ReActAgent
 
 log = logging.getLogger(__name__)
 
@@ -144,7 +148,7 @@ def domain_hits(task: str) -> set[str]:
     t = task.lower()
     hits = set()
     for key, spec in SPECIALISTS.items():
-        hint = spec.get("hint", "")
+        hint = str(spec.get("hint", ""))
         if not hint:
             continue
         for kw in hint.split(","):
@@ -190,7 +194,7 @@ class OrchestratorAgent:
         self.session_id     = session_id
         self._cancel        = threading.Event()
         self._cancel_reason = "usuário"
-        self._active        = []
+        self._active: list["ReActAgent"] = []
         self._lock          = threading.Lock()
         # Registra o llm padrão no cache
         OrchestratorAgent._llm_cache[llm.model] = llm
@@ -273,7 +277,7 @@ class OrchestratorAgent:
     # -----------------------------------------------------------------
     # Criação de especialista
     # -----------------------------------------------------------------
-    def _create_specialist(self, specialist_name: str, tool_names: list[str] = None, allow_ensemble_swap: bool = True):
+    def _create_specialist(self, specialist_name: str, tool_names: list[str] | None = None, allow_ensemble_swap: bool = True):
         """tool_names=None -> toolset padrao do especialista (ou tudo se for 'geral',
         que nao tem categoria propria). tool_names explicito -> restringe a essa lista
         (usado pra liberar so os dominios detectados na tarefa, nao a ferramenta inteira).
@@ -387,7 +391,7 @@ class OrchestratorAgent:
             ],
         })
 
-        results  = [None] * len(assignments)
+        results: list[str | None] = [None] * len(assignments)
         res_lock = threading.Lock()
 
         def run_one(idx: int, assignment: dict):

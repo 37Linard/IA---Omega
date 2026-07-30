@@ -6,6 +6,7 @@ import shutil
 import threading
 import uuid
 from datetime import datetime, timedelta
+from typing import Callable
 
 BACKUP_DIR  = os.path.join(os.path.dirname(__file__), "workspace", "backups")
 MAX_BACKUPS = 7
@@ -102,7 +103,7 @@ class ShortTermMemory:
 class VectorIndex:
     def __init__(self, persist_dir: str):
         self._ok       = False
-        self._embed_fn = None
+        self._embed_fn: Callable[[list[str]], list] | None = None
         try:
             import vector_store
             from embeddings import get_embedder
@@ -126,6 +127,7 @@ class VectorIndex:
     def add_session(self, sid: str, task: str, result: str, timestamp: str):
         if not self._ok:
             return
+        assert self._embed_fn is not None  # garantido por self._ok
         try:
             vec = self._embed_fn([f"{task}\n{result}"])[0]
             self._sessions.upsert(
@@ -140,6 +142,7 @@ class VectorIndex:
     def add_fact(self, fid: str, text: str, created: str):
         if not self._ok:
             return
+        assert self._embed_fn is not None  # garantido por self._ok
         try:
             vec = self._embed_fn([text])[0]
             self._facts.upsert(
@@ -181,6 +184,7 @@ class VectorIndex:
         k = self._safe_n(self._sessions, n)
         if k == 0:
             return []
+        assert self._embed_fn is not None  # garantido por self._ok
         try:
             vec = self._embed_fn([query])[0]
             hits = self._sessions.query(vec, k)
@@ -195,6 +199,7 @@ class VectorIndex:
         k = self._safe_n(self._facts, n)
         if k == 0:
             return []
+        assert self._embed_fn is not None  # garantido por self._ok
         try:
             vec = self._embed_fn([query])[0]
             hits = self._facts.query(vec, k)
@@ -206,6 +211,7 @@ class VectorIndex:
     def add_episode(self, eid: str, summary: str, timestamp: str):
         if not self._ok:
             return
+        assert self._embed_fn is not None  # garantido por self._ok
         try:
             vec = self._embed_fn([summary])[0]
             self._episodes.upsert(
@@ -223,6 +229,7 @@ class VectorIndex:
         k = self._safe_n(self._episodes, n)
         if k == 0:
             return []
+        assert self._embed_fn is not None  # garantido por self._ok
         try:
             vec = self._embed_fn([query])[0]
             hits = self._episodes.query(vec, k)

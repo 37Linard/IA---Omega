@@ -62,6 +62,7 @@ def available() -> bool:
 
 
 def _make_job(mem_limit_bytes: int, active_process_limit: int):
+    assert _kernel32 is not None  # só chamado depois de available() checar
     hjob = _kernel32.CreateJobObjectW(None, None)
     if not hjob:
         raise OSError("CreateJobObjectW falhou")
@@ -91,6 +92,7 @@ def run_capped(cmd, cwd, timeout_s, mem_limit_bytes, active_process_limit=8, **p
     Object falhar -- quem chama deve ter fallback (subprocess.run puro)."""
     if not available():
         raise OSError("Job Object API indisponivel (nao-Windows)")
+    assert _kernel32 is not None  # garantido por available()
 
     hjob = _make_job(mem_limit_bytes, active_process_limit)
     hprocess = None

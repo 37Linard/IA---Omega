@@ -125,7 +125,7 @@ def _run_in_wasm(code: str, timeout_s: int = WASM_TIMEOUT) -> tuple[str, int, fl
     expõe sockets por padrão), /workspace montado read-only, memória
     limitada, timeout via epoch interruption — interrompe de dentro do
     runtime, sem depender de matar processo externo (o que o Docker faz)."""
-    from wasmtime import DirPerms, ExitTrap, FilePerms, Linker, Store, Trap, TrapCode, WasiConfig
+    from wasmtime import DirPerms, ExitTrap, FilePerms, Func, Linker, Store, Trap, TrapCode, WasiConfig
 
     engine, module = _get_wasm_module()
     store = Store(engine)
@@ -171,6 +171,7 @@ def _run_in_wasm(code: str, timeout_s: int = WASM_TIMEOUT) -> tuple[str, int, fl
     try:
         instance = linker.instantiate(store, module)
         start = instance.exports(store)["_start"]
+        assert isinstance(start, Func)  # WASI sempre expõe "_start" como função
         start(store)
     except ExitTrap as e:
         exit_code = e.code

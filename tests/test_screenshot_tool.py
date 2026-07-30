@@ -18,7 +18,7 @@ def _install_fake_pyautogui(monkeypatch, screenshot_fn):
 
 def test_saves_screenshot_to_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(ss_mod, "WORKSPACE", str(tmp_path))
-    captured = {}
+    captured: dict = {}
     _install_fake_pyautogui(monkeypatch, lambda path: captured.setdefault("path", path))
 
     result = ScreenshotTool().run({})

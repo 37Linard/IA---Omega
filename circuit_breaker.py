@@ -63,7 +63,7 @@ def record_result(tool: str, success: bool):
             log.warning("CIRCUIT BREAKER: '%s' aberto após %d falhas seguidas", tool, s["failures"])
 
 
-def reset(tool: str = None):
+def reset(tool: str | None = None):
     """Reset manual — útil pra testes ou pra desbloquear na mão sem reiniciar o processo."""
     with _lock:
         if tool:

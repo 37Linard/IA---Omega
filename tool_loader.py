@@ -7,7 +7,7 @@ import logging
 log = logging.getLogger(__name__)
 
 
-def load_tools(tools_dir: str = None) -> list:
+def load_tools(tools_dir: str | None = None) -> list:
     """
     Carrega automaticamente todas as *_tool.py de /tools/.
     Adicionar nova tool = criar o arquivo. Sem editar api.py.

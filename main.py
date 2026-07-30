@@ -1,3 +1,5 @@
+from typing import Any
+
 from llm import OllamaLLM
 from agent import ReActAgent
 from tools.echo_tool import EchoTool
@@ -12,7 +14,7 @@ from tools.http_request_tool import HttpRequestTool
 def main():
     llm = OllamaLLM(model="qwen2.5:7b")
 
-    tools = [
+    tools: list[Any] = [
         EchoTool(),
         ReadFileTool(),
         WriteFileTool(),

@@ -94,6 +94,7 @@ class BrowserTool:
             self._page    = self._browser.new_page(
                 viewport={"width": 1280, "height": 800}
             )
+        return self._page
 
     def run(self, input_data: dict) -> str:
         try:
@@ -103,8 +104,7 @@ class BrowserTool:
 
         action = input_data.get("action", "")
         try:
-            self._ensure_browser()
-            page = self._page
+            page = self._ensure_browser()
 
             # ── Visual goto: navigate + screenshot + VLM ──────────────────
             if action == "visual_goto":

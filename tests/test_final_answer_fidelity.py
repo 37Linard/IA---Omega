@@ -57,7 +57,7 @@ def test_guard_looks_at_most_recent_observation_only():
 
 def test_guard_emits_error_step_when_warning_triggers():
     a = _bare_agent(["Observation: Erro: nenhuma tarefa agendada com id 'xyz'."])
-    emitted = []
+    emitted: list = []
 
     a._guard_final_answer("Removido com sucesso!", emit=emitted.append)
 
@@ -68,7 +68,7 @@ def test_guard_emits_error_step_when_warning_triggers():
 
 def test_guard_does_not_emit_when_no_mismatch():
     a = _bare_agent(["Observation: Tudo certo."])
-    emitted = []
+    emitted: list = []
 
     a._guard_final_answer("Perfeito!", emit=emitted.append)
 

@@ -1,7 +1,7 @@
 try:
     from ddgs import DDGS
 except ImportError:
-    from duckduckgo_search import DDGS
+    from duckduckgo_search import DDGS  # type: ignore[assignment]
 
 from tools._security import wrap_untrusted
 
