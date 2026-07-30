@@ -493,6 +493,12 @@ class ReActAgent:
                 result = f"Erro ao executar {action}: {str(e)}"
         circuit_breaker.record_result(action, success=not self._is_tool_error(result))
         audit.log_action(action, action_input, result, duration=time.monotonic() - t0)
+
+        if action == "rag_search" and self._emit:
+            sources = getattr(self.tools[action], "last_sources", None)
+            if sources:
+                self._emit({"type": "rag_sources", "sources": sources})
+
         return result
 
     def _detect_tool_hint(self, task: str) -> str:
@@ -657,7 +663,7 @@ class ReActAgent:
 
             if action == "Final Answer":
                 action_input = self._guard_final_answer(action_input, emit=emit)
-                emit({"type": "observation", "content": f"âœ“ Passo {step_num} concluído: {action_input[:150]}"})
+                emit({"type": "observation", "content": f"✓ Passo {step_num} concluído: {action_input[:150]}"})
                 return action_input
 
             action_key = f"{action}::{json.dumps(action_input, sort_keys=True)}"
@@ -684,7 +690,7 @@ class ReActAgent:
 
         # Esgotou tentativas mas ferramenta executou — usa última observação como resultado
         if last_successful_obs:
-            emit({"type": "observation", "content": f"âœ“ Passo {step_num} concluído (forçado): {last_successful_obs[:150]}"})
+            emit({"type": "observation", "content": f"✓ Passo {step_num} concluído (forçado): {last_successful_obs[:150]}"})
             return last_successful_obs
         return f"Passo {step_num} incompleto após 5 tentativas."
 

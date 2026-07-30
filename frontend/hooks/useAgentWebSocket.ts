@@ -91,6 +91,9 @@ export function useAgentWebSocket() {
           case 'workflow_plan':
             s.setWorkflowPlan(msgId, data.task, data.nodes)
             break
+          case 'rag_sources':
+            s.addRagSources(msgId, data.sources)
+            break
           case 'correction':
             s.addStep(msgId, { type: 'correction', content: data.content })
             break

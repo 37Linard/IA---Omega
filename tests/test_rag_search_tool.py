@@ -74,3 +74,44 @@ def test_file_filter_disables_episode_search(monkeypatch):
     )
     result = tool.run({"query": "rescisão", "file": "contrato.pdf"})
     assert "não deveria aparecer" not in result
+
+
+def test_last_sources_populated_for_frontend_citations(monkeypatch):
+    """last_sources é o side-channel que agent.py lê pra emitir o evento WS
+    rag_sources (fontes/trecho na resposta) — não vai na Observation em
+    texto, mas tem que refletir os mesmos resultados."""
+    tool = _tool(
+        monkeypatch,
+        docs=[{"file": "contrato.pdf"}],
+        doc_results=[{"file": "contrato.pdf", "page": 2, "score": 0.9, "text": "cláusula de rescisão " * 20}],
+        episodes=[],
+    )
+    tool.run({"query": "rescisão"})
+
+    assert tool.last_sources == [{
+        "file": "contrato.pdf", "page": 2, "score": 0.9,
+        "excerpt": ("cláusula de rescisão " * 20)[:220],
+    }]
+
+
+def test_last_sources_empty_when_nothing_found(monkeypatch):
+    tool = _tool(monkeypatch, docs=[], doc_results=[], episodes=[])
+    tool.run({"query": "bitcoin"})
+    assert tool.last_sources == []
+
+
+def test_last_sources_resets_between_calls(monkeypatch):
+    """1ª chamada acha resultado, 2ª não — last_sources não pode vazar da
+    chamada anterior (bug real de outra classe: side-channel goiaba)."""
+    tool = _tool(
+        monkeypatch,
+        docs=[{"file": "contrato.pdf"}],
+        doc_results=[{"file": "contrato.pdf", "page": 1, "score": 0.5, "text": "algo"}],
+        episodes=[],
+    )
+    tool.run({"query": "rescisão"})
+    assert tool.last_sources
+
+    monkeypatch.setattr("tools.rag_search_tool.get_rag_index", lambda: _FakeRagIndex(docs=[], results=[]))
+    tool.run({"query": "outra coisa"})
+    assert tool.last_sources == []

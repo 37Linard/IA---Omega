@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Conversation, Message, AgentStep, WorkflowNode } from '@/lib/types'
+import type { Conversation, Message, AgentStep, WorkflowNode, RagSource } from '@/lib/types'
 import { generateId, extractTitle } from '@/lib/utils'
 
 export interface HitlRequest {
@@ -36,6 +36,7 @@ interface ChatState {
   appendFinalToken: (msgId: string, token: string) => void
   addStep: (msgId: string, step: Omit<AgentStep, 'id'>) => void
   setWorkflowPlan: (msgId: string, task: string, nodes: Omit<WorkflowNode, 'status'>[]) => void
+  addRagSources: (msgId: string, sources: RagSource[]) => void
   updateWorkflowNode: (msgId: string, nodeId: number | string, status: WorkflowNode['status'], result?: string) => void
   appendThought: (msgId: string, token: string) => void
   finalizeMessage: (msgId: string, content?: string) => void
@@ -204,6 +205,29 @@ export const useChatStore = create<ChatState>()(
                       ? { ...m, workflow: { task, nodes: nodes.map(n => ({ ...n, status: 'pending' as const })) } }
                       : m
                   ),
+                }
+              : c
+          ),
+        }))
+      },
+
+      addRagSources: (msgId, sources) => {
+        const s = get()
+        set(state => ({
+          conversations: state.conversations.map(c =>
+            c.id === s.activeId
+              ? {
+                  ...c,
+                  messages: c.messages.map(m => {
+                    if (m.id !== msgId) return m
+                    // acumula entre chamadas de rag_search na mesma tarefa,
+                    // sem duplicar o mesmo file+page (múltiplas queries podem
+                    // achar o mesmo trecho de novo)
+                    const existing = m.ragSources ?? []
+                    const seen = new Set(existing.map(r => `${r.file}::${r.page}`))
+                    const merged = [...existing, ...sources.filter(r => !seen.has(`${r.file}::${r.page}`))]
+                    return { ...m, ragSources: merged }
+                  }),
                 }
               : c
           ),

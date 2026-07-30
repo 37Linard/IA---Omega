@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Copy, Check, RefreshCw, ThumbsUp, ThumbsDown, Bot, User } from 'lucide-react'
+import { Copy, Check, RefreshCw, ThumbsUp, ThumbsDown, Bot, User, FileText } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { CodeBlock } from './CodeBlock'
 import { ThinkingSteps } from './ThinkingSteps'
@@ -179,6 +179,39 @@ export function MessageBubble({ message, onRegenerate }: Props) {
               {message.content}
             </ReactMarkdown>
             {isStreaming && <BlinkCursor />}
+          </div>
+        )}
+
+        {/* Fontes RAG */}
+        {hasContent && !!message.ragSources?.length && (
+          <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--text-muted)', fontWeight: 500, letterSpacing: '0.03em' }}>
+              <FileText size={12} />
+              Fontes ({message.ragSources.length})
+            </div>
+            {message.ragSources.map((src, i) => (
+              <div
+                key={`${src.file}-${src.page}-${i}`}
+                style={{
+                  background: 'var(--surface)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '8px 12px',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)' }}>
+                    {src.file}{src.page ? ` — pág. ${src.page}` : ''}
+                  </span>
+                  <span style={{ fontSize: '10.5px', color: 'var(--text-muted)', flexShrink: 0 }}>
+                    score {src.score}
+                  </span>
+                </div>
+                <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.5, margin: 0 }}>
+                  {src.excerpt}{src.excerpt.length >= 220 ? '…' : ''}
+                </p>
+              </div>
+            ))}
           </div>
         )}
 

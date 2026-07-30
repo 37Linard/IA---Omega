@@ -19,11 +19,18 @@ class RagSearchTool:
 
     def __init__(self):
         self.memory = None  # injetado lazy no primeiro run() — evita custo de LanceDB no import
+        # side-channel pra agent.py emitir fontes estruturadas pro frontend (WS
+        # rag_sources) sem poluir a Observation em texto que vai pro LLM —
+        # populado a cada run(), lido pelo chamador logo em seguida (mesma
+        # thread, _execute_tool roda a tool com ThreadPoolExecutor(max_workers=1)
+        # e só segue depois de future.result(), sem race).
+        self.last_sources: list[dict] = []
 
     def run(self, params: dict) -> str:
         query       = params.get("query", "").strip()
         n           = int(params.get("n", 5))
         file_filter = params.get("file") or None
+        self.last_sources = []
 
         if not query:
             return "Erro: forneça 'query' para buscar nos documentos."
@@ -37,6 +44,11 @@ class RagSearchTool:
 
         if not doc_results and not episodes:
             return "Nenhum trecho relevante encontrado, nem em documentos nem em sessões anteriores."
+
+        self.last_sources = [
+            {"file": r["file"], "page": r["page"], "score": r["score"], "excerpt": r["text"][:220]}
+            for r in doc_results
+        ]
 
         lines = [f"Trechos mais relevantes para: '{query}'\n"]
         for i, r in enumerate(doc_results, 1):

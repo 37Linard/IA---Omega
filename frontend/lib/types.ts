@@ -41,12 +41,20 @@ export interface WorkflowPlan {
   aggregateResult?: string
 }
 
+export interface RagSource {
+  file: string
+  page: number
+  score: number
+  excerpt: string
+}
+
 export interface Message {
   id: string
   role: MessageRole
   content: string
   steps: AgentStep[]
   workflow?: WorkflowPlan
+  ragSources?: RagSource[]
   isStreaming: boolean
   streamingThought: string
   tokenUsage?: TokenUsage
@@ -92,4 +100,5 @@ export type WsMessage =
   | { type: 'token_usage'; prompt: number; completion: number }
   | { type: 'agent_status'; id?: number | string; agent: string; status: 'running' | 'done' | 'error'; subtask?: string; result?: string }
   | { type: 'workflow_plan'; task: string; nodes: { id: number; specialist: string; label: string; subtask: string }[] }
+  | { type: 'rag_sources'; sources: RagSource[] }
   | { type: 'hitl_request'; id: string; action: string; input: unknown; message: string }
