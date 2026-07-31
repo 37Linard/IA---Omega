@@ -32,6 +32,16 @@ export default defineConfig({
     navigationTimeout: 30000,
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    {
+      name: 'chromium',
+      use: {
+        ...devices['Desktop Chrome'],
+        permissions: ['microphone'],
+        // dispositivo de áudio/vídeo fake do Chromium -- specs de voz (modo
+        // contínuo/wake word, push-to-talk) não dependem de mic real nem de
+        // permissão manual
+        launchOptions: { args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] },
+      },
+    },
   ],
 })

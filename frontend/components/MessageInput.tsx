@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { Send, Mic, MicOff, Paperclip, Square, Loader2, ArrowUp } from 'lucide-react'
+import { Send, Mic, MicOff, Paperclip, Square, Loader2, ArrowUp, Ear } from 'lucide-react'
 import { transcribeAudio, uploadFile } from '@/lib/api'
+import { useWakeWord } from '@/hooks/useWakeWord'
 
 interface Props {
   onSend: (text: string) => void
@@ -21,6 +22,20 @@ export function MessageInput({ onSend, onCancel, running, connected }: Props) {
   const mediaRef    = useRef<MediaRecorder | null>(null)
   const chunksRef   = useRef<Blob[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // refs "sempre atual" -- o loop do wake word roda por baixo de um único
+  // start(), sem re-render — sem isso ele ficaria preso no `running`/`onSend`
+  // do instante em que foi ligado (mesmo padrão de useAgentWebSocket.ts)
+  const runningRef = useRef(running)
+  useEffect(() => { runningRef.current = running }, [running])
+  const onSendRef = useRef(onSend)
+  useEffect(() => { onSendRef.current = onSend }, [onSend])
+  const isBusy = useCallback(() => runningRef.current, [])
+  const handleWakeCommand = useCallback((text: string) => { onSendRef.current(text) }, [])
+  const wakeWord = useWakeWord(handleWakeCommand, isBusy)
+  const wakeWordStopRef = useRef(wakeWord.stop)
+  wakeWordStopRef.current = wakeWord.stop
+  useEffect(() => () => wakeWordStopRef.current(), []) // libera o mic se o componente desmontar com o modo ligado
 
   useEffect(() => {
     const el = textareaRef.current
@@ -169,12 +184,28 @@ export function MessageInput({ onSend, onCancel, running, connected }: Props) {
           className="placeholder:text-[#6b6b6b] disabled:opacity-50"
         />
 
-        {/* Mic */}
+        {/* Modo de voz contínuo (wake word) */}
+        <IconBtn
+          onClick={() => (wakeWord.active ? wakeWord.stop() : wakeWord.start())}
+          title={
+            wakeWord.active
+              ? wakeWord.state === 'awaiting_command' ? 'Ouvi a wake word — fale o comando' : 'Modo contínuo ligado — diga "ei agente"'
+              : 'Ligar modo de voz contínuo (wake word, sem clicar pra cada frase)'
+          }
+          active={wakeWord.active}
+          activeColor={wakeWord.state === 'awaiting_command' ? '#4ade80' : '#818cf8'}
+          disabled={recording}
+        >
+          <Ear size={16} className={wakeWord.active ? 'anim-pulse-glow' : undefined} />
+        </IconBtn>
+
+        {/* Mic (push-to-talk) */}
         <IconBtn
           onClick={toggleRecording}
           title={recording ? 'Parar gravação' : 'Gravar voz'}
           active={recording}
           activeColor="#f87171"
+          disabled={wakeWord.active}
         >
           {recording ? <MicOff size={16} /> : <Mic size={16} />}
         </IconBtn>
@@ -227,10 +258,14 @@ export function MessageInput({ onSend, onCancel, running, connected }: Props) {
       </div>
 
       {/* Hint */}
-      <p style={{ textAlign: 'center', fontSize: '11.5px', color: 'var(--text-muted)', marginTop: '8px' }}>
-        {connected
-          ? 'Ctrl+Enter para enviar · Markdown suportado'
-          : '⚡ Reconectando ao backend (localhost:8000)...'}
+      <p style={{ textAlign: 'center', fontSize: '11.5px', color: wakeWord.active ? '#818cf8' : 'var(--text-muted)', marginTop: '8px' }}>
+        {wakeWord.active
+          ? wakeWord.state === 'awaiting_command'
+            ? '🎙️ Wake word ouvida — fale o comando agora...'
+            : 'Modo contínuo ligado — diga "ei agente" seguido do que precisa'
+          : connected
+            ? 'Ctrl+Enter para enviar · Markdown suportado'
+            : '⚡ Reconectando ao backend (localhost:8000)...'}
       </p>
     </div>
   )

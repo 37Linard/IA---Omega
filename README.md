@@ -41,7 +41,7 @@ IA:   [Raciocínio] Vou buscar o preço, gerar o chart e salvar...
 - **ThinkingSteps collapsível** — veja o raciocínio completo (Thought → Action → Observation)
 - **Auto-correção** — quando uma ferramenta falha, o agente analisa o erro e tenta novamente (até 3x)
 - Upload de arquivos, copiar resposta, regenerar, feedback 👍👎
-- Modo voz: fale para o agente (STT via Whisper) e ouça a resposta (TTS)
+- Modo voz: fale para o agente (STT via Whisper) e ouça a resposta (TTS) — push-to-talk (clica, fala, solta) ou **contínuo com wake word** (ícone de orelha): liga uma vez, diz "ei agente" + o pedido, sem clicar de novo pra cada frase. 100% local — reusa o mesmo faster-whisper do push-to-talk, nunca usa a Web Speech API do browser (essa manda áudio pro Google continuamente)
 - Troca de modelo em runtime via dropdown
 
 ### RAG — Documentos Locais
