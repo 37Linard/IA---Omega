@@ -81,6 +81,11 @@ MAX_TOOL_CALLS    = 25     # max chamadas de ferramenta por tarefa
 MAX_TOOL_RETRIES  = 3      # tentativas de auto-correção em caso de erro
 TASK_TIMEOUT      = 300    # timeout total da tarefa em segundos
 
+# WS caiu com uma tarefa rodando (wifi cai, backend reinicia com --reload) —
+# agente continua rodando em background por até isso aqui esperando
+# reconectar com o mesmo session_id antes de cancelar de vez
+WS_RESUME_GRACE_SECONDS = 120
+
 # ── Reflection Loop ─────────────────────────────────────────────────────────
 REFLECTION_ENABLED   = True   # crítico avalia própria resposta antes de entregar
 REFLECTION_THRESHOLD = 2      # score mínimo (1-5) — abaixo disso reescreve (2 = só reescreve se realmente ruim)

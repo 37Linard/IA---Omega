@@ -43,6 +43,7 @@ IA:   [Raciocínio] Vou buscar o preço, gerar o chart e salvar...
 - Upload de arquivos, copiar resposta, regenerar, feedback 👍👎
 - Modo voz: fale para o agente (STT via Whisper) e ouça a resposta (TTS) — push-to-talk (clica, fala, solta) ou **contínuo com wake word** (ícone de orelha): liga uma vez, diz "ei agente" + o pedido, sem clicar de novo pra cada frase. 100% local — reusa o mesmo faster-whisper do push-to-talk, nunca usa a Web Speech API do browser (essa manda áudio pro Google continuamente)
 - Troca de modelo em runtime via dropdown
+- **Resume de stream via WS** — wifi caiu ou o backend reiniciou (`--reload`) no meio de uma resposta? Reconecta sozinho (3s) e retoma exatamente de onde parou, sem perder o que já foi gerado — o agente continua rodando em background no servidor por até 2 min (`WS_RESUME_GRACE_SECONDS`) esperando você voltar. Só se esse prazo passar (ou o servidor cair de vez) é que a resposta é marcada como interrompida
 
 ### RAG — Documentos Locais
 - Indexe PDF, TXT, Markdown e DOCX

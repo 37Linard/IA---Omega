@@ -13,7 +13,7 @@ import voice
 
 import logging
 import threading
-from config import OLLAMA_MODEL, OLLAMA_URL, TASK_TIMEOUT, AUTH_PASSWORD, JWT_SECRET, SCHEDULED_TASKS, RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW, NIGHTLY_EVAL_ENABLED, NIGHTLY_EVAL_HOUR, NIGHTLY_EVAL_MINUTE
+from config import OLLAMA_MODEL, OLLAMA_URL, TASK_TIMEOUT, AUTH_PASSWORD, JWT_SECRET, SCHEDULED_TASKS, RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW, NIGHTLY_EVAL_ENABLED, NIGHTLY_EVAL_HOUR, NIGHTLY_EVAL_MINUTE, WS_RESUME_GRACE_SECONDS
 from health_checks import jwt_secret_warning, remote_access_warning
 import auth as _auth
 import scheduler as _scheduler
@@ -111,6 +111,25 @@ def create_agent(session_id: str = "") -> OrchestratorAgent:
     """Cria orchestrator isolado por conexão WebSocket. Roteia para especialista automaticamente."""
     tools = load_tools()
     return OrchestratorAgent(llm=llm, all_tools=tools, session_id=session_id)
+
+
+class _TaskSession:
+    """Task em andamento sobrevivendo a uma queda de WS — agente e fila de
+    eventos ficam vivos aqui enquanto o cliente não reconecta (ou até
+    WS_RESUME_GRACE_SECONDS passar). Reconectar com o mesmo session_id
+    retoma drenando a MESMA queue de onde a conexão anterior parou — nada
+    de lista de replay separada, o que já foi emitido enquanto ninguém
+    escutava só fica bufferizado no asyncio.Queue (ilimitado por padrão)
+    até alguém vir puxar de novo."""
+    def __init__(self, agent: OrchestratorAgent, queue: "asyncio.Queue[dict]"):
+        self.agent   = agent
+        self.queue   = queue
+        self.running = True
+        self.grace_timer: threading.Timer | None = None
+
+
+_task_sessions: dict[str, _TaskSession] = {}
+_task_sessions_lock = threading.Lock()
 
 
 _scheduler.start(create_agent, SCHEDULED_TASKS)
@@ -662,21 +681,87 @@ async def update_profile(body: dict, _rl=Depends(_check_rate_limit)):
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
 
-    # Verifica JWT no primeiro pacote se auth ativado
-    if AUTH_PASSWORD:
-        try:
-            first = await asyncio.wait_for(websocket.receive_json(), timeout=10)
-            if not _auth.verify_token(first.get("token", "")):
-                await websocket.send_json({"type": "error", "content": "Não autorizado — faça login."})
-                await websocket.close(code=4001)
-                return
-        except Exception:
-            await websocket.close(code=4001)
-            return
-
-    session_id = str(uuid.uuid4())
-    agent = create_agent(session_id)
+    # 1ª mensagem é sempre {"token": "...", "session_id": "..."} — mesmo com
+    # AUTH_PASSWORD desligada, precisa do session_id pra resumir stream depois
+    # de queda de conexão. NOTA: frontend não tem fluxo de login nenhum ainda
+    # (/login existe no backend, órfão — achado igual /history e fetchHealth
+    # antes, fora do escopo aqui) — token sempre vai vazio na prática hoje,
+    # então AUTH_PASSWORD continua não-funcional pro WS até isso ser
+    # implementado, mesmo estado de antes desta mudança, não é regressão.
     try:
+        hello = await asyncio.wait_for(websocket.receive_json(), timeout=10)
+    except Exception:
+        await websocket.close(code=4002)
+        return
+
+    if AUTH_PASSWORD and not _auth.verify_token(hello.get("token", "")):
+        await websocket.send_json({"type": "error", "content": "Não autorizado — faça login."})
+        await websocket.close(code=4001)
+        return
+
+    session_id = str(hello.get("session_id") or "").strip() or str(uuid.uuid4())
+
+    with _task_sessions_lock:
+        resumed = _task_sessions.get(session_id)
+        if resumed and resumed.grace_timer:
+            resumed.grace_timer.cancel()
+            resumed.grace_timer = None
+
+    agent = resumed.agent if resumed else create_agent(session_id)
+    loop  = asyncio.get_running_loop()
+    await websocket.send_json({"type": "hello_ack", "resumed": bool(resumed and resumed.running)})
+
+    async def drain(session_state: _TaskSession) -> None:
+        """Consome a queue de eventos de uma task e reenvia pelo WS — mesmo
+        loop usado tanto pra task nova quanto pra retomar uma em andamento
+        depois de reconectar (a queue é a mesma, só troca quem tá lendo)."""
+        queue  = session_state.queue
+        ws_fut = None
+        done   = False
+        while not done:
+            q_fut = asyncio.ensure_future(queue.get())
+            if ws_fut is None or ws_fut.done():
+                ws_fut = asyncio.ensure_future(websocket.receive_json())
+
+            finished, _ = await asyncio.wait([q_fut, ws_fut], return_when=asyncio.FIRST_COMPLETED)
+
+            if ws_fut in finished:
+                try:
+                    msg = ws_fut.result()
+                    if isinstance(msg, dict):
+                        if msg.get("type") == "cancel":
+                            agent.cancel()
+                        elif msg.get("type") == "hitl_response":
+                            from agent import _HITL_REGISTRY
+                            hitl_id = msg.get("id", "")
+                            entry   = _HITL_REGISTRY.get(hitl_id)
+                            if entry:
+                                entry["approved"] = bool(msg.get("approved", False))
+                                entry["event"].set()
+                except Exception:
+                    pass
+                ws_fut = None
+
+            if q_fut in finished:
+                item = q_fut.result()
+                await websocket.send_json(item)
+                if item.get("type") == "done":
+                    done = True
+                    session_state.running = False
+            else:
+                q_fut.cancel()
+
+        if ws_fut and not ws_fut.done():
+            ws_fut.cancel()
+            try:
+                await ws_fut
+            except (asyncio.CancelledError, Exception):
+                pass
+
+    try:
+        if resumed and resumed.running:
+            await drain(resumed)
+
         while True:
             data = await websocket.receive_json()
 
@@ -697,81 +782,60 @@ async def websocket_endpoint(websocket: WebSocket):
             if not task:
                 continue
 
-            loop = asyncio.get_running_loop()
             queue: asyncio.Queue[dict] = asyncio.Queue()
             agent.reset_cancel()
+            session_state = _TaskSession(agent, queue)
+            with _task_sessions_lock:
+                _task_sessions[session_id] = session_state
 
-            def sync_callback(step_data):
-                asyncio.run_coroutine_threadsafe(queue.put(step_data), loop)
+            def sync_callback(step_data, _q=queue):
+                asyncio.run_coroutine_threadsafe(_q.put(step_data), loop)
 
-            def run_agent():
+            def run_agent(_q=queue, _cb=sync_callback):
                 llm.reset_tokens()
                 timer = threading.Timer(TASK_TIMEOUT, lambda: agent.cancel(reason="timeout"))
                 timer.start()
                 try:
-                    agent.run(task, step_callback=sync_callback)
+                    agent.run(task, step_callback=_cb)
                 except Exception as e:
                     asyncio.run_coroutine_threadsafe(
-                        queue.put({"type": "error", "content": str(e)}), loop
+                        _q.put({"type": "error", "content": str(e)}), loop
                     )
                 finally:
                     timer.cancel()
                     tok = llm.session_tokens
                     asyncio.run_coroutine_threadsafe(
-                        queue.put({"type": "token_usage",
-                                   "prompt": tok["prompt"],
-                                   "completion": tok["completion"]}), loop
+                        _q.put({"type": "token_usage",
+                                "prompt": tok["prompt"],
+                                "completion": tok["completion"]}), loop
                     )
                     asyncio.run_coroutine_threadsafe(
-                        queue.put({"type": "done", "content": ""}), loop
+                        _q.put({"type": "done", "content": ""}), loop
                     )
 
             loop.run_in_executor(executor, run_agent)
-
-            ws_fut = None
-            done = False
-            while not done:
-                q_fut = asyncio.ensure_future(queue.get())
-                if ws_fut is None or ws_fut.done():
-                    ws_fut = asyncio.ensure_future(websocket.receive_json())
-
-                finished, _ = await asyncio.wait([q_fut, ws_fut], return_when=asyncio.FIRST_COMPLETED)
-
-                if ws_fut in finished:
-                    try:
-                        msg = ws_fut.result()
-                        if isinstance(msg, dict):
-                            if msg.get("type") == "cancel":
-                                agent.cancel()
-                            elif msg.get("type") == "hitl_response":
-                                from agent import _HITL_REGISTRY
-                                hitl_id = msg.get("id", "")
-                                entry   = _HITL_REGISTRY.get(hitl_id)
-                                if entry:
-                                    entry["approved"] = bool(msg.get("approved", False))
-                                    entry["event"].set()
-                    except Exception:
-                        pass
-                    ws_fut = None
-
-                if q_fut in finished:
-                    item = q_fut.result()
-                    await websocket.send_json(item)
-                    if item.get("type") == "done":
-                        done = True
-                else:
-                    q_fut.cancel()
-
-            if ws_fut and not ws_fut.done():
-                ws_fut.cancel()
-                try:
-                    await ws_fut
-                except (asyncio.CancelledError, Exception):
-                    pass
+            await drain(session_state)
 
     except WebSocketDisconnect:
-        agent.cancel()
-        agent.memory.end_session(session_id, llm)
+        with _task_sessions_lock:
+            state = _task_sessions.get(session_id)
+        if state and state.running:
+            # tarefa ainda rodando — não cancela na hora, dá uma janela pro
+            # cliente reconectar com o mesmo session_id e retomar de onde
+            # parou. Só cancela de vez se ninguém voltar a tempo.
+            def _expire(sid=session_id):
+                with _task_sessions_lock:
+                    s = _task_sessions.pop(sid, None)
+                if s:
+                    s.agent.cancel()
+                    s.agent.memory.end_session(sid, llm)
+            state.grace_timer = threading.Timer(WS_RESUME_GRACE_SECONDS, _expire)
+            state.grace_timer.start()
+        else:
+            with _task_sessions_lock:
+                _task_sessions.pop(session_id, None)
+            agent.cancel()
+            agent.memory.end_session(session_id, llm)
 
 
 @app.get("/{full_path:path}", include_in_schema=False)

@@ -81,6 +81,7 @@ export interface UserProfile {
 }
 
 export type WsMessage =
+  | { type: 'hello_ack'; resumed: boolean }
   | { type: 'step'; content: string }
   | { type: 'thought'; content: string }
   | { type: 'action'; content: string }
