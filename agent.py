@@ -30,7 +30,57 @@ ERROR_LOG = os.path.join(os.path.dirname(__file__), "workspace", "error_log.json
 # Human-in-the-Loop registry — hitl_id → {"event": Event, "approved": bool|None}
 _HITL_REGISTRY: dict = {}
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+class ColoredFormatter(logging.Formatter):
+    """Colore [LEVEL] e prefixos de convenção já usados no log do agente
+    (TAREFA:, EXECUTANDO:, etc). Sem lib externa — só ANSI. use_color=None
+    autodetecta via isatty() (sem cor se a saída for redirecionada/arquivo,
+    pra não sujar log em disco com escape codes)."""
+
+    _RESET = "\033[0m"
+    _DIM   = "\033[2m"
+    _LEVEL_COLORS = {
+        "WARNING":  "\033[33m",
+        "ERROR":    "\033[1;31m",
+        "CRITICAL": "\033[1;31m",
+        "DEBUG":    "\033[2m",
+    }
+    # Grupos por papel no fluxo ReAct — ciclo/ação/controle/conclusão
+    _PREFIX_COLORS = {
+        "TAREFA": "\033[34m", "STEP": "\033[34m",
+        "EXECUTANDO": "\033[36m", "RESULTADO": "\033[36m",
+        "ORCHESTRATOR": "\033[35m", "LOOP": "\033[35m", "PARSER": "\033[35m",
+        "LLM": "\033[35m", "SPECIALIST MODEL": "\033[35m", "MODO CONVERSA": "\033[35m",
+        "RESPOSTA FINAL": "\033[32m", "REFLECTION": "\033[32m",
+    }
+    _PREFIX_RE = re.compile(
+        r"^(" + "|".join(re.escape(p) for p in sorted(_PREFIX_COLORS, key=len, reverse=True)) + r")\b:?"
+    )
+
+    def __init__(self, use_color: bool | None = None):
+        super().__init__()
+        self.use_color = sys.stdout.isatty() if use_color is None else use_color
+
+    def format(self, record: logging.LogRecord) -> str:
+        message = record.getMessage()
+        ts = self.formatTime(record)
+        if not self.use_color:
+            return f"{ts} [{record.levelname}] {message}"
+
+        level_color = self._LEVEL_COLORS.get(record.levelname, "")
+        level_txt = f"{level_color}[{record.levelname}]{self._RESET}" if level_color else f"[{record.levelname}]"
+
+        m = self._PREFIX_RE.match(message)
+        if m:
+            prefix = m.group(0)
+            color = self._PREFIX_COLORS[m.group(1)]
+            message = f"{color}{prefix}{self._RESET}{message[len(prefix):]}"
+
+        return f"{self._DIM}{ts}{self._RESET} {level_txt} {message}"
+
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(ColoredFormatter())
+logging.basicConfig(level=logging.INFO, handlers=[_handler])
 log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """Você é uma IA pessoal inteligente, conversacional e prestativa — com personalidade própria.
