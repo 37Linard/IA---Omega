@@ -157,3 +157,11 @@ body {
 
 /* ── Focus ring ──────────────────────────────────────────────── */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+
+/* ── App shell height ────────────────────────────────────────── */
+/* 100vh não acompanha a barra de endereço do navegador mobile ao rolar —
+   100dvh sobrescreve por cascata onde suportado, sem regressão onde não. */
+.app-shell {
+  height: 100vh;
+  height: 100dvh;
+}
