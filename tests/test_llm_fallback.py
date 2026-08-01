@@ -107,6 +107,24 @@ def test_generate_does_not_retry_or_fallback_on_http_error(monkeypatch):
     assert calls == ["qwen2.5:7b"]  # sem retry, sem fallback — erro real da API
 
 
+def test_generate_uses_configured_timeout(monkeypatch):
+    # llm.py importa GENERATE_TIMEOUT por valor (from config import ...) —
+    # patchar o nome já importado em llm_mod, não o atributo em config_mod.
+    monkeypatch.setattr(llm_mod, "GENERATE_TIMEOUT", 300)
+
+    captured_timeouts = []
+
+    def fake_post(url, json=None, timeout=None, **kw):
+        captured_timeouts.append(timeout)
+        return _fake_response(200, _stats_payload("ok"))
+
+    monkeypatch.setattr(llm_mod.requests, "post", fake_post)
+
+    OllamaLLM(model="qwen2.5:7b", fallback_model="").generate("oi")
+
+    assert captured_timeouts == [300]
+
+
 def test_fallback_never_used_when_equal_to_primary(monkeypatch):
     calls = []
 

@@ -3,7 +3,7 @@ import logging
 import time
 import requests
 import tracing
-from config import OLLAMA_URL, NUM_PREDICT, NUM_CTX, NUM_GPU, TEMPERATURE, VISION_MODEL, KEEP_ALIVE, FALLBACK_MODEL
+from config import OLLAMA_URL, NUM_PREDICT, NUM_CTX, NUM_GPU, TEMPERATURE, VISION_MODEL, KEEP_ALIVE, FALLBACK_MODEL, GENERATE_TIMEOUT
 
 log = logging.getLogger(__name__)
 
@@ -102,7 +102,7 @@ class OllamaLLM:
         }
 
         if on_token is None:
-            response = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=120)
+            response = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=GENERATE_TIMEOUT)
             response.raise_for_status()
             data = response.json()
             call_stats = self._update_stats(data)
@@ -110,7 +110,7 @@ class OllamaLLM:
 
         full_response = ""
         call_stats = {}
-        with requests.post(f"{self.base_url}/api/generate", json=payload, stream=True, timeout=120) as response:
+        with requests.post(f"{self.base_url}/api/generate", json=payload, stream=True, timeout=GENERATE_TIMEOUT) as response:
             response.raise_for_status()
             for line in response.iter_lines():
                 if not line:

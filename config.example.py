@@ -72,6 +72,8 @@ NUM_CTX           = 3072   # context window (3072 = padrão, 4096 = mais context
 NUM_GPU           = -1     # -1 = usa todas as camadas GPU disponíveis
 TEMPERATURE       = 0.1    # 0.0 = determinístico, 1.0 = criativo
 KEEP_ALIVE        = "30m"  # Ollama descarrega modelo após 5min ocioso por padrão — evita recarregar 7B a cada pausa
+GENERATE_TIMEOUT  = 300    # segundos máx por chamada de geração (aumente se seu
+                            # modelo for grande/lento com offload parcial pra RAM)
 
 TOOL_TIMEOUT      = 30     # segundos máximos por ferramenta (padrão)
 TOOL_TIMEOUTS: dict = {    # overrides por ferramenta — usa TOOL_TIMEOUT se não listada aqui
