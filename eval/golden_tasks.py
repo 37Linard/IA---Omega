@@ -23,7 +23,7 @@ GOLDEN_TASKS = [
         "must_not_contain": ["erro:", "traceback"],
         "expected_tools": [],
         "forbidden_tools": ["terminal", "run_python", "send_email"],
-        "max_seconds": 30,
+        "max_seconds": 60,  # 2026-08-01: trocado OLLAMA_MODEL 7B->14B, observado 11-27s pra essa task — 60s dá margem 2x+
     },
     {
         "id": "python_arithmetic",
@@ -32,7 +32,12 @@ GOLDEN_TASKS = [
         "must_not_contain": ["erro:", "traceback"],
         "expected_tools": ["run_python"],
         "forbidden_tools": [],
-        "max_seconds": 60,
+        # 2026-08-01: com 14B, observado 28s numa run e 80s+ (estourou o antigo
+        # 60s) noutra, quando o modelo se corrige e chama run_python 2x. Tarefa
+        # matemática similar via WS chegou a 208s com reflection. 240s dá margem
+        # real, não chute — ver docs/superpowers/specs/2026-08-01-log-colorido-terminal-design.md
+        # (achado do hook pre-push) e memória do projeto pra contexto completo.
+        "max_seconds": 240,
     },
     {
         "id": "currency_routing_not_crypto",
@@ -42,7 +47,10 @@ GOLDEN_TASKS = [
         "must_not_contain": ["erro:", "traceback"],
         "expected_tools": ["get_currency"],
         "forbidden_tools": ["get_crypto"],
-        "max_seconds": 90,  # roda + reflection loop — 45s dava FAIL falso mesmo com resposta certa
+        # 2026-08-01: com 14B, observado 17-19s numa run rápida, mas tarefas
+        # equivalentes (fiat/crypto) via WS chegaram a 130s+ noutras runs —
+        # reflection/self-consistency variam bastante de execução pra execução.
+        "max_seconds": 180,
     },
     {
         "id": "crypto_routing_not_currency",
@@ -52,7 +60,7 @@ GOLDEN_TASKS = [
         "must_not_contain": ["erro:", "traceback"],
         "expected_tools": ["get_crypto"],
         "forbidden_tools": ["get_currency"],
-        "max_seconds": 90,  # roda + reflection loop — 45s dava FAIL falso mesmo com resposta certa
+        "max_seconds": 180,  # mesmo raciocínio da task acima (currency_routing_not_crypto)
     },
     {
         "id": "compound_task_multi_domain_regression",
@@ -70,8 +78,11 @@ GOLDEN_TASKS = [
         "expected_tools": ["run_python", "write_file", "web_search"],
         "forbidden_tools": [],
         # 3 specialists "paralelos" (código) mas 1 GPU só serializa no Ollama de fato —
-        # observado 136.5s e depois 209.9s (variância real entre runs, tools extras
-        # tipo fetch_page dependendo da busca). Margem generosa pra não ficar flaky.
-        "max_seconds": 300,
+        # observado 136.5s e depois 209.9s com 7B (variância real entre runs, tools
+        # extras tipo fetch_page dependendo da busca). 2026-08-01: com 14B, tarefas
+        # de complexidade parecida via WS chegaram a 247-383s, e essa golden task
+        # em si rodou de verdade até 609.6s numa tentativa (480s não bastou,
+        # estourou) — 720s dá margem real sobre o pior caso já observado.
+        "max_seconds": 720,
     },
 ]
