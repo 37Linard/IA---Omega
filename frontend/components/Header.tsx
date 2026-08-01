@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Menu, Sun, Moon, User, Heart, Cpu, Database, Trash2, FolderOpen, RefreshCw, CheckCircle, XCircle, Loader2, Layers, GitGraph, LayoutGrid, Workflow, Download, ScrollText } from 'lucide-react'
+import { Menu, Sun, Moon, User, Heart, Cpu, Database, Trash2, FolderOpen, RefreshCw, CheckCircle, XCircle, Loader2, Layers, GitGraph, LayoutGrid, Workflow, Download, ScrollText, MoreHorizontal } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
 import { fetchModels, setModel, fetchProfile, saveProfile, fetchRagDocs, ragIndexFolder, ragDeleteDoc, uploadFile, fetchMetrics, fetchSandboxStatus, fetchSpecialistModels, setSpecialistModel, exportConversation, fetchHealth, fetchAudit, fetchTraceRecent } from '@/lib/api'
 import type { AuditEntry, TraceSpan } from '@/lib/api'
@@ -19,6 +19,7 @@ export function Header({ onToggleSidebar }: Props) {
   const [models, setModels] = useState<string[]>([])
   const [currentModel, setCurrentModel] = useState('')
   const [profileOpen, setProfileOpen] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
   const [healthOpen, setHealthOpen] = useState(false)
   const [auditOpen, setAuditOpen] = useState(false)
   const [ragOpen, setRagOpen] = useState(false)
@@ -134,50 +135,79 @@ export function Header({ onToggleSidebar }: Props) {
             </div>
           )}
 
-          <HeaderBtn onClick={() => router.push('/ferramentas')} title="Ferramentas IA — 25 ferramentas especializadas">
-            <LayoutGrid size={15} />
-          </HeaderBtn>
+          {/* Colapsáveis — visíveis a partir de sm (640px); em telas
+              menores só via o botão "mais". iconBtnStyle define
+              display:'flex' inline no HeaderBtn, por isso o toggle de
+              visibilidade fica no wrapper (classe Tailwind), não no botão
+              em si — inline style sempre vence classe CSS em especificidade. */}
+          <div className="hidden sm:flex" style={{ alignItems: 'center', gap: '4px' }}>
+            <HeaderBtn onClick={() => router.push('/ferramentas')} title="Ferramentas IA — 25 ferramentas especializadas">
+              <LayoutGrid size={15} />
+            </HeaderBtn>
 
-          <HeaderBtn
-            onClick={handleExport}
-            title={
-              exportState === 'done' ? 'Exportado! (baixado + salvo no Obsidian se configurado)'
-              : exportState === 'error' ? 'Erro ao exportar — backend disponível?'
-              : 'Exportar conversa (Markdown + Obsidian)'
-            }
-          >
-            {exportState === 'saving' ? <Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} />
-              : exportState === 'done' ? <CheckCircle size={15} style={{ color: '#4ade80' }} />
-              : exportState === 'error' ? <XCircle size={15} style={{ color: '#f87171' }} />
-              : <Download size={15} />}
-          </HeaderBtn>
+            <HeaderBtn
+              onClick={handleExport}
+              title={
+                exportState === 'done' ? 'Exportado! (baixado + salvo no Obsidian se configurado)'
+                : exportState === 'error' ? 'Erro ao exportar — backend disponível?'
+                : 'Exportar conversa (Markdown + Obsidian)'
+              }
+            >
+              {exportState === 'saving' ? <Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} />
+                : exportState === 'done' ? <CheckCircle size={15} style={{ color: '#4ade80' }} />
+                : exportState === 'error' ? <XCircle size={15} style={{ color: '#f87171' }} />
+                : <Download size={15} />}
+            </HeaderBtn>
 
-          <HeaderBtn onClick={() => setNocOpen(true)} title="NOC — Arvore de Raciocinio">
-            <GitGraph size={15} />
-          </HeaderBtn>
+            <HeaderBtn onClick={() => setNocOpen(true)} title="NOC — Arvore de Raciocinio">
+              <GitGraph size={15} />
+            </HeaderBtn>
 
-          <HeaderBtn onClick={() => setWorkflowOpen(true)} title="Workflow — DAG de Execução Paralela">
-            <Workflow size={15} />
-          </HeaderBtn>
+            <HeaderBtn onClick={() => setWorkflowOpen(true)} title="Workflow — DAG de Execução Paralela">
+              <Workflow size={15} />
+            </HeaderBtn>
 
-          <HeaderBtn onClick={() => setModelsOpen(true)} title="Modelos por Especialista">
-            <Layers size={15} />
-          </HeaderBtn>
+            <HeaderBtn onClick={() => setModelsOpen(true)} title="Modelos por Especialista">
+              <Layers size={15} />
+            </HeaderBtn>
 
-          <HeaderBtn onClick={() => setRagOpen(true)} title="Indexação de documentos (RAG)">
-            <Database size={15} />
-          </HeaderBtn>
+            <HeaderBtn onClick={() => setRagOpen(true)} title="Indexação de documentos (RAG)">
+              <Database size={15} />
+            </HeaderBtn>
 
-          <HeaderBtn onClick={() => setProfileOpen(true)} title="Perfil">
-            <User size={15} />
-          </HeaderBtn>
+            <HeaderBtn onClick={() => setProfileOpen(true)} title="Perfil">
+              <User size={15} />
+            </HeaderBtn>
+
+            <HeaderBtn onClick={() => setAuditOpen(true)} title="Audit log / Tracing">
+              <ScrollText size={15} />
+            </HeaderBtn>
+          </div>
+
+          {/* Botão "mais" — só abaixo de sm, abre menu com as 8 ações acima */}
+          <div className="sm:hidden" style={{ position: 'relative' }}>
+            <HeaderBtn onClick={() => setMoreOpen(o => !o)} title="Mais opções">
+              <MoreHorizontal size={15} />
+            </HeaderBtn>
+            {moreOpen && (
+              <MoreMenu
+                onClose={() => setMoreOpen(false)}
+                items={[
+                  { icon: <LayoutGrid size={15} />, label: 'Ferramentas IA', onClick: () => router.push('/ferramentas') },
+                  { icon: <Download size={15} />, label: 'Exportar conversa', onClick: handleExport },
+                  { icon: <GitGraph size={15} />, label: 'NOC — Árvore de Raciocínio', onClick: () => setNocOpen(true) },
+                  { icon: <Workflow size={15} />, label: 'Workflow — DAG', onClick: () => setWorkflowOpen(true) },
+                  { icon: <Layers size={15} />, label: 'Modelos por Especialista', onClick: () => setModelsOpen(true) },
+                  { icon: <Database size={15} />, label: 'RAG — Documentos', onClick: () => setRagOpen(true) },
+                  { icon: <User size={15} />, label: 'Perfil', onClick: () => setProfileOpen(true) },
+                  { icon: <ScrollText size={15} />, label: 'Audit log / Tracing', onClick: () => setAuditOpen(true) },
+                ]}
+              />
+            )}
+          </div>
 
           <HeaderBtn onClick={() => setHealthOpen(true)} title="Status do sistema">
             <Heart size={15} />
-          </HeaderBtn>
-
-          <HeaderBtn onClick={() => setAuditOpen(true)} title="Audit log / Tracing">
-            <ScrollText size={15} />
           </HeaderBtn>
 
           <HeaderBtn onClick={toggleTheme} title={theme === 'dark' ? 'Tema claro' : 'Tema escuro'}>
@@ -237,6 +267,56 @@ const iconBtnStyle: React.CSSProperties = {
 function applyHover(e: React.MouseEvent<HTMLButtonElement>, on: boolean) {
   e.currentTarget.style.color    = on ? 'var(--text-primary)' : 'var(--text-muted)'
   e.currentTarget.style.background = on ? 'var(--surface-hover)' : 'transparent'
+}
+
+function MoreMenu({ items, onClose }: { items: { icon: React.ReactNode; label: string; onClick: () => void }[]; onClose: () => void }) {
+  return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 59 }} />
+      <div
+        role="menu"
+        aria-label="Mais opções"
+        style={{
+          position: 'absolute',
+          top: '100%',
+          right: 0,
+          marginTop: '6px',
+          background: 'var(--surface)',
+          border: '1px solid var(--border-strong)',
+          borderRadius: 'var(--radius-sm)',
+          boxShadow: '0 12px 32px rgba(0,0,0,0.4)',
+          zIndex: 60,
+          minWidth: '220px',
+          overflow: 'hidden',
+        }}
+        className="anim-fade-up"
+      >
+        {items.map((item, i) => (
+          <button
+            key={i}
+            onClick={() => { item.onClick(); onClose() }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              width: '100%',
+              padding: '10px 14px',
+              fontSize: '13px',
+              color: 'var(--text-secondary)',
+              background: 'transparent',
+              textAlign: 'left',
+              cursor: 'pointer',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-hover)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+          >
+            {item.icon}
+            {item.label}
+          </button>
+        ))}
+      </div>
+    </>
+  )
 }
 
 /* ── Modal base ──────────────────────────────────────────────── */
