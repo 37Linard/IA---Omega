@@ -1,11 +1,23 @@
-# 🤖 Agente IA Local — v1.4
+# Agente IA Local — v1.4
 
 [![Tests](https://github.com/37Linard/IA---Omega/actions/workflows/tests.yml/badge.svg)](https://github.com/37Linard/IA---Omega/actions/workflows/tests.yml)
 ![Coverage](./coverage.svg)
 
 > Assistente de IA autônomo rodando **100% na sua máquina** — sem APIs externas, sem custos por token, sem dados saindo do seu PC.
 
-Usa Ollama para inferência local, arquitetura ReAct para raciocínio passo a passo, e 32 ferramentas reais para executar tarefas complexas.
+Usa Ollama para inferência local, arquitetura ReAct para raciocínio passo a passo, e 32 ferramentas reais para executar tarefas complexas: pesquisa, automação de arquivos, análise de dados, geração de imagem, integração com serviços externos e mais.
+
+---
+
+### Destaques
+
+- **Multi-agente** — um orquestrador delega para 6 especialistas (pesquisa, arquivos, código, dados, comunicação, computador) em paralelo
+- **Memória em camadas** — curto prazo (Redis), episódica (LanceDB) e grafo de conhecimento de longo prazo, sem depender de contexto infinito
+- **Auto-correção e reflexão** — o próprio agente avalia a resposta (score 1-5) e reescreve antes de entregar
+- **Sandbox real** — código gerado roda isolado (WASM → Docker → local), sem acesso à rede ou ao filesystem do host
+- **Observabilidade de produção** — dashboard próprio + Prometheus/Grafana, CI com testes e secret-scanning
+
+---
 
 **v1.0** — Tiered Memory · Reflection Loop · Multi-model por especialista · WASM/Docker Sandbox · Visual Browser · NOC Dashboard + HITL
 **v1.1** — Geração de imagem local (SD-turbo) · LanceDB (substituiu ChromaDB) · Export de conversa pro Obsidian · Auto-detect de nível técnico · Plugin manager sandboxado
@@ -16,24 +28,24 @@ Usa Ollama para inferência local, arquitetura ReAct para raciocínio passo a pa
 
 ---
 
-## ✨ O que ele faz
+## O que ele faz
 
 ```
-Você: pesquise o preço do bitcoin, gere um gráfico e salve o relatório
+Você: pesquise as notícias de tecnologia de hoje, resuma os 3 principais pontos e salve num relatório
 
-IA:   [Raciocínio] Vou buscar o preço, gerar o chart e salvar...
-      [Ação] web_search("bitcoin price today BRL")
-      [Resultado] Bitcoin: R$ 612.450 (alta 2,3%)
-      [Ação] generate_chart(dados, type="line", title="Bitcoin 7 dias")
-      [Ação] write_file("relatorio_bitcoin.md", conteudo)
-      ✅ Relatório salvo com gráfico em relatorio_bitcoin.md
+IA:   [Raciocínio] Vou buscar as notícias, sintetizar e salvar em arquivo...
+      [Ação] web_search("notícias de tecnologia hoje")
+      [Resultado] 12 fontes encontradas
+      [Ação] generate_report(resumo, title="Notícias de Tech — Resumo Diário")
+      [Ação] write_file("relatorio_noticias.md", conteudo)
+      Relatório salvo em relatorio_noticias.md
 ```
 
 **Funciona com qualquer modelo Ollama** — llama3, qwen2.5, mistral, deepseek, gemma...
 
 ---
 
-## 🎯 Funcionalidades
+## Funcionalidades
 
 ### Interface
 - Chat estilo Claude/ChatGPT — dark mode, sidebar com histórico agrupado por data
@@ -94,7 +106,7 @@ SCHEDULED_TASKS = [
 
 ---
 
-## 🛠️ 32 Ferramentas
+## Ferramentas
 
 O agente decide sozinho qual usar baseado na tarefa. Todo input é validado contra schema antes de executar (`tools/_schema.py`), e tools que ingerem conteúdo externo (web/páginas/arquivos) passam por guard de prompt-injection (`tools/_security.py`).
 
@@ -132,7 +144,7 @@ build_sandbox.bat
 
 ---
 
-## 🚀 Instalação
+## Instalação
 
 ### Pré-requisitos
 - [Ollama](https://ollama.com) instalado e rodando
@@ -207,7 +219,7 @@ Abrir: **http://localhost:3000**
 
 ---
 
-## ⚙️ Configuração
+## Configuração
 
 Tudo em `config.py`:
 
@@ -261,7 +273,7 @@ ALLOWED_READ_DIRS = [
 
 ---
 
-## 🔌 Adicionar nova ferramenta
+## Adicionar nova ferramenta
 
 Crie `tools/minha_tool.py`:
 
@@ -292,7 +304,7 @@ Ver a docstring de `plugin_manager.py` pro modelo de segurança completo. Nunca 
 
 ---
 
-## 🧪 Testes E2E (Playwright)
+## Testes E2E (Playwright)
 
 Cobrem o frontend de verdade (browser real, WS real contra o backend) — complementam o `pytest` (backend isolado/mockado). Alvo é **sempre `localhost:8000`**, nunca `npm run dev` na 3000: `WS_URL`/`API_BASE` (`frontend/lib/utils.ts`) são relativos ao host atual, sem proxy configurado (`next.config.ts` usa `output: "export"`), então a 3000 nunca fala com o backend de verdade.
 
@@ -313,7 +325,7 @@ npm run test:e2e:ui       # modo interativo (Playwright UI)
 
 ---
 
-## 📊 Observabilidade (Prometheus + Grafana)
+## Observabilidade (Prometheus + Grafana)
 
 Opcional — o `/metrics` (JSON, usado pelo Dashboard de Performance do frontend) já cobre o snapshot atual sem nenhum container extra. Prometheus/Grafana servem pra ver os mesmos agregados **ao longo do tempo** + alertar sozinho.
 
@@ -337,7 +349,7 @@ Notificação via Discord — reusa o mesmo webhook do `discord_notify_tool.py`:
 
 ---
 
-## 🔒 Segurança e Privacidade
+## Segurança e Privacidade
 
 - **Zero dados externos** — nenhuma chamada para OpenAI, Anthropic ou qualquer API de IA
 - **Sandbox** — `run_python` isolado (WASM → Docker → local), sem acesso à rede ou filesystem do host
@@ -360,7 +372,7 @@ Notificação via Discord — reusa o mesmo webhook do `discord_notify_tool.py`:
 
 ---
 
-## 🌐 Acesso Remoto Seguro (Tailscale)
+## Acesso Remoto Seguro (Tailscale)
 
 `--host 0.0.0.0` (padrão dos `.bat`) já deixa a API alcançável por qualquer dispositivo na sua rede — Tailscale só estende essa mesma rede pra fora de casa, via VPN mesh criptografada ponto-a-ponto, sem abrir porta nenhuma no roteador.
 
@@ -389,7 +401,7 @@ Isso publica `https://<seu-dispositivo>.<tailnet>.ts.net` com certificado TLS v�
 
 ---
 
-## 🗺️ Arquitetura
+## Arquitetura
 
 ```
 Browser ──WebSocket──► FastAPI (api.py)
@@ -413,7 +425,7 @@ Browser ──WebSocket──► FastAPI (api.py)
 
 ---
 
-## 📁 Estrutura do projeto
+## Estrutura do projeto
 
 ```
 agente-ia-local/
@@ -447,7 +459,7 @@ agente-ia-local/
 
 ---
 
-## 📦 Requirements
+## Requirements
 
 ```
 # requirements.txt
@@ -492,7 +504,7 @@ pytest
 
 ---
 
-## 🗺️ Roadmap
+## Roadmap
 
 ### v1.0 — Entregue ✅
 - [x] Tiered Memory (Redis + LanceDB + Knowledge Graph)
@@ -554,7 +566,7 @@ pytest
 
 ---
 
-## 🙋 FAQ
+## FAQ
 
 **Precisa de GPU?**
 Não obrigatório, mas recomendado. Com CPU funciona — só mais lento. `llama3.2:3b` roda ok em CPU moderna.
@@ -577,7 +589,7 @@ Ver seção de configuração avançada na [wiki](../../wiki).
 
 ---
 
-## 📄 Licença
+## Licença
 
 MIT — use, modifique e distribua livremente.
 
@@ -585,7 +597,7 @@ MIT — use, modifique e distribua livremente.
 
 <div align="center">
 
-Feito com 🧠 + Ollama + FastAPI + Next.js
+Construído com Ollama + FastAPI + Next.js
 
 **100% local · 100% privado · 0 custos por token**
 
