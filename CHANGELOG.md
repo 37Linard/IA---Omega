@@ -5,15 +5,34 @@ bloco é uma sessão/leva de trabalho, não um release numerado à parte.
 
 ## [Não lançado]
 
-Trabalho commitado em `main` desde v1.4, ainda sem número de versão atribuído
-(escopo grande demais pra resumir aqui sem virar a própria reconciliação de novo —
-ver [[project_agente_ia]] na memória do agente pra changelog sessão-a-sessão):
-RAG re-rank com cross-encoder, sandbox local real via Job Object (Windows), eval
-noturno automático (golden tasks 1x/dia), self-consistency N=3 com votação real,
-streaming de tool-call parcial, ensemble multi-modelo real (troca de modelo entre
-tentativas), Prometheus/Grafana, plugin signing Ed25519 + marketplace discovery,
-unificação de `knowledge_graph.json` em `agent_memory.json`, POC de LoRA fine-tune
-(isolado em `lora_experiments/`, não é produto).
+## v1.5 — 2026-08-04 — modelo 14B, mobile, voz contínua, resume de stream
+
+### Adicionado
+- Troca do modelo principal pra classe maior (14B) — `GENERATE_TIMEOUT` configurável,
+  timeouts do `eval_harness` recalibrados, teste garante `OLLAMA_MODEL`/
+  `ENSEMBLE_MODELS[0]` sincronizados.
+- Frontend responsivo mobile — `100dvh` com fallback `100vh`, header colapsa ícones
+  secundários em menu "mais" abaixo de 640px.
+- Log colorido no terminal do backend (nível + prefixo de convenção).
+- Modo de voz contínuo (wake word, sem precisar clicar botão).
+- Resume de stream WS — reconecta sem perder resposta em andamento.
+- Rollback de `write_file` (snapshot antes de sobrescrever).
+- Viewer de audit log/tracing no frontend.
+- Acesso remoto seguro via Tailscale (avisos reais, documentado no README).
+- RAG mostra fonte/trecho na resposta.
+- `SPECIALIST_MODELS` ganha flag real (`SPECIALIST_MODELS_ENABLED`, default `False`).
+- Dashboard Grafana + alertas finalizados (provisionado, testado ao vivo).
+- E2E de frontend com Playwright (browser real, WS real).
+- mypy sai do modo lenient — produção 100% limpa, gate real no CI.
+- Teste detecta drift entre `config.py` e `config.example.py` (mesma classe de bug
+  achada no v1.4).
+- Endpoint de export de dados do usuário (zip) + `restore.ps1` (restore automatizado).
+- README: seção Destaques + screenshots, emojis removidos.
+
+### Corrigido
+- CI quebrado — `coverage-badge` importava `pkg_resources`, removido do setuptools
+  moderno.
+- CI mypy achou discrepância real de stub do `requests` (Linux vs Windows local).
 
 ## v1.4 — 2026-07-23 — hardening de segurança
 
@@ -79,6 +98,15 @@ unificação de `knowledge_graph.json` em `agent_memory.json`, POC de LoRA fine-
 - mypy configurado (`mypy.ini`, lenient — projeto começou sem tipagem nenhuma).
 - `/health` avisa quando `JWT_SECRET` vazio com `AUTH_PASSWORD` ativa.
 - 60+ testes novos no total cobrindo os achados acima. Suite completa: 291 passed.
+- RAG: re-rank real com cross-encoder em vez do mix fixo 65/35.
+- Sandbox local real via Job Object (Windows) pro fallback do `run_python`.
+- Eval noturno automático — roda golden tasks 1x/dia via subprocess.
+- Self-consistency N=3 com votação real (era best-of-2) + streaming de tool-call parcial.
+- Ensemble multi-modelo real (`ENSEMBLE_MODELS`) — troca de modelo entre tentativas.
+- Observabilidade: endpoint Prometheus + provisionamento Grafana.
+- Plugin signing Ed25519 na instalação + discovery via registry JSON (marketplace).
+- Unificação de `knowledge_graph.json` em `agent_memory.json` (chave `"kg"`).
+- POC de LoRA fine-tune (isolado em `lora_experiments/`, não é produto).
 
 ## v1.3.1 — 2026-07-22
 

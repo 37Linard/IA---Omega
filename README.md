@@ -1,4 +1,4 @@
-# Agente IA Local — v1.4
+# Agente IA Local — v1.5
 
 [![Tests](https://github.com/37Linard/IA---Omega/actions/workflows/tests.yml/badge.svg)](https://github.com/37Linard/IA---Omega/actions/workflows/tests.yml)
 ![Coverage](./coverage.svg)
@@ -24,7 +24,8 @@ Usa Ollama para inferência local, arquitetura ReAct para raciocínio passo a pa
 **v1.2** — Refino visual do frontend · Fontes de pesquisa ao vivo no chat · `generate_image` com seed/múltiplas imagens/upscale
 **v1.3** — Testes automatizados (pytest) · HITL por camada de risco · Isolamento least-privilege por especialista · Prompt-injection guard · Schema validado por tool · Circuit breaker · Eval harness + git hook pre-push · Memória episódica cross-sessão · Plan-then-Execute persistido em disco · Execução proativa (`schedule_task`) · Guards de fidelidade da resposta final
 **v1.3.1** — RAG busca também episódios de memória · fix de memória não-compartilhada entre especialistas · `workspace/` fora da árvore vigiada pelo reload (NTFS junction) · otimização de performance medida (flash attention + KV cache + quant menor)
-**v1.4** — Auditoria de segurança em todas as tools destructive (sandbox-escape, SSRF, query injection) · CI (GitHub Actions) + secret-scanning (gitleaks) · `requirements.txt` pinado · circuit breaker com cooldown por tool · mypy · dashboard com taxa de reflection-rewrite · `discord_notify` configurado
+**v1.4** — Auditoria de segurança em todas as tools destructive (sandbox-escape, SSRF, query injection) · CI (GitHub Actions) + secret-scanning (gitleaks) · `requirements.txt` pinado · circuit breaker com cooldown por tool · mypy · dashboard com taxa de reflection-rewrite · `discord_notify` configurado · RAG re-rank com cross-encoder · ensemble multi-modelo real · Prometheus/Grafana · plugin signing Ed25519 + marketplace
+**v1.5** — Modelo principal trocado pra classe 14B · frontend responsivo mobile · voz contínua (wake word) · resume de stream WS · rollback de `write_file` · viewer de audit log/tracing · acesso remoto via Tailscale · RAG mostra fonte na resposta · E2E Playwright · mypy 100% gate no CI · export/restore de dados do usuário
 
 ---
 
