@@ -1220,14 +1220,16 @@ function PluginMarketplaceModal({ onClose }: { onClose: () => void }) {
       return
     }
     setExpanded(name)
-    setViewed(v => ({ ...v, [name]: true }))
-    if (!code[name]) {
-      try {
-        const d = await fetchStagedPluginCode(name)
-        setCode(c => ({ ...c, [name]: d.code }))
-      } catch {
-        setCode(c => ({ ...c, [name]: '# erro ao carregar código' }))
-      }
+    if (code[name]) {
+      setViewed(v => ({ ...v, [name]: true }))
+      return
+    }
+    try {
+      const d = await fetchStagedPluginCode(name)
+      setCode(c => ({ ...c, [name]: d.code }))
+      setViewed(v => ({ ...v, [name]: true }))
+    } catch {
+      setCode(c => ({ ...c, [name]: '# erro ao carregar código' }))
     }
   }
 
