@@ -5,6 +5,20 @@ bloco é uma sessão/leva de trabalho, não um release numerado à parte.
 
 ## [Não lançado]
 
+- Plugin Marketplace UI — `stage`/`approve`/busca de registries/gestão de
+  autores confiáveis agora acessíveis pelo frontend (antes só via
+  `plugin_manager.py` no terminal). Endpoints de escrita (`stage`/`approve`/
+  `trust`/`untrust`) atrás da mesma senha do `/export/data` — decisão
+  documentada na spec, ver
+  `docs/superpowers/specs/2026-08-04-plugin-marketplace-ui-design.md`.
+  Registries também podem ser adicionadas em runtime (sem restart), mesmo
+  padrão do `SPECIALIST_MODELS` override. Validado ao vivo contra o backend
+  real (não mock): registry+manifest+plugin assinado servidos por
+  `python -m http.server` local — busca, stage (falha sem autor confiado,
+  falha com hash adulterado, sucede com hash+assinatura corretos), aprovação
+  (arquivo `.py` real cai em `plugins/`), trust/untrust e remove de registry
+  todos exercitados via curl contra `uvicorn api:app` real.
+
 ## v1.5 — 2026-08-04 — modelo 14B, mobile, voz contínua, resume de stream
 
 ### Adicionado
