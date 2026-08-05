@@ -1,17 +1,28 @@
 """
 Plugin manager — mecanismo pra instalar ferramentas de terceiros via URL,
 com verificação de integridade e execução sandboxada. Escopo desta versão:
-design + sandboxing. NÃO existe instalação automática nem exposição como
-tool do agente — tudo aqui é operado manualmente, por você.
+design + sandboxing. NÃO existe uma tool "plugin" que o agente possa
+escolher chamar sozinho — a instalação em si (stage/approve/trust) é
+pensada pra ser sempre uma ação deliberada do operador (CLI ou API
+autenticada), nunca algo que o agente decide no meio de uma conversa. Ver
+ponto 5 pra uma ressalva importante sobre o que "não exposto como tool"
+realmente barra e o que não barra.
 
 MODELO DE SEGURANÇA (leia antes de habilitar):
 
-  1. Instalar um plugin é SEMPRE uma ação manual do operador (você, rodando
-     este script na linha de comando) — nunca algo que o agente decide
-     sozinho em runtime. Isso existe especificamente pra impedir que uma
-     prompt injection convença o agente a instalar código malicioso durante
+  1. Instalar um plugin é pensado pra ser SEMPRE uma ação deliberada do
+     operador (você, rodando este script na linha de comando ou chamando a
+     API com a senha) — não uma decisão que o agente toma sozinho durante
      uma conversa. `plugin_manager.py` não é carregado por `tool_loader.py`
-     e não aparece na lista de ferramentas do agente.
+     e não existe uma tool "plugin" na lista de ferramentas do agente. Isso
+     NÃO significa que as rotas/comandos sejam inatingíveis por uma prompt
+     injection — ver ponto 5: a tool `terminal` (host-level, allowlist com
+     curl/wget/python) consegue alcançar tanto a CLI quanto a API HTTP se
+     invocada com os argumentos certos. O que de fato impede instalação de
+     código malicioso não é "o agente não consegue chegar na rota", é a
+     cadeia hash + assinatura + allowlist de autor confiável + (agora)
+     `AUTH_PASSWORD` obrigatória nas rotas de escrita — nenhuma dessas
+     camadas é algo que o agente consegue satisfazer sozinho.
 
   2. O manifest fixa um hash SHA-256 do código (`code_sha256`). Se o
      conteúdo na URL mudar depois de publicado — o clássico ataque de
@@ -43,12 +54,33 @@ MODELO DE SEGURANÇA (leia antes de habilitar):
      `run_python`, não mais que isso.
 
   5. Desde a v1.6, `stage`/`approve`/`trust_author`/`untrust_author` também
-     ficam expostos via API HTTP (`api.py`, rotas `/plugins/...`) — travados
-     atrás da mesma senha (`AUTH_PASSWORD`) que protege `/export/data`. Isso
-     não reabre o vetor de prompt injection do ponto 1: essas rotas nunca
-     foram (e continuam não sendo) carregadas por `tool_loader.py`, o agente
-     não tem — e nunca teve — como chamá-las. O que muda é só "alcançável
-     também por quem tem a senha remota", não "alcançável pelo agente".
+     ficam expostos via API HTTP (`api.py`, rotas `/plugins/...`). As 4
+     rotas de escrita (stage/approve/trust/untrust) falham fechado com 403
+     se `AUTH_PASSWORD` estiver vazia — o padrão de fábrica — em vez de
+     ficarem abertas sem senha nenhuma pra quem estiver na rede.
+
+     Isso NÃO significa que essas rotas (ou a CLI equivalente) sejam
+     inatingíveis pelo agente. Nenhuma delas é registrada como tool em
+     `tool_loader.py` — não existe uma tool "plugin" dedicada — mas o
+     projeto já tem uma tool `terminal` host-level cuja allowlist inclui
+     `curl`/`wget`/`python` e que só bloqueia caracteres de encadeamento de
+     shell (`& | ; $( > <` e crase), não chamadas HTTP arbitrárias. Um comando
+     como `curl -X POST http://127.0.0.1:8000/plugins/stage ...` sem
+     nenhum desses caracteres passa no filtro da terminal tool sem
+     problema. Isso não é novo desta feature nem foi introduzido por ela: a
+     CLI (`python plugin_manager.py stage ...`) sempre foi alcançável do
+     mesmo jeito, pela mesma tool — a API HTTP não é "mais alcançável" do
+     que a CLI já era.
+
+     As barreiras reais contra instalação não autorizada, nesta ordem de
+     dependência, são: `AUTH_PASSWORD` (agora obrigatória nas 4 rotas de
+     escrita da API — sem ela, 403 antes de tocar em qualquer lógica de
+     plugin), a allowlist de autores confiáveis (`trusted_authors.json`,
+     editada manualmente pelo operador) e a verificação de hash+assinatura
+     do manifest. `PLUGINS_ENABLED=False` (padrão) NÃO está nessa lista de
+     barreiras de instalação — ele só trava a EXECUÇÃO (`run_plugin`), não
+     o stage nem o approve: staging e aprovação funcionam normalmente
+     mesmo com `PLUGINS_ENABLED=False` (ver ponto 3).
 
 Uso (manual, no terminal — nunca chamado pelo agente):
 

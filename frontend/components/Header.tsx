@@ -1172,6 +1172,7 @@ function PluginMarketplaceModal({ onClose }: { onClose: () => void }) {
   const [staged, setStaged] = useState<StagedPlugin[]>([])
   const [expanded, setExpanded] = useState<string | null>(null)
   const [code, setCode] = useState<Record<string, string>>({})
+  const [codeError, setCodeError] = useState<Record<string, string>>({})
   const [viewed, setViewed] = useState<Record<string, boolean>>({})
   const [busy, setBusy] = useState<string | null>(null)
   const [stagedError, setStagedError] = useState('')
@@ -1204,7 +1205,15 @@ function PluginMarketplaceModal({ onClose }: { onClose: () => void }) {
   const doStage = async (manifestUrl: string) => {
     setBusy(manifestUrl)
     try {
-      await stagePlugin(manifestUrl)
+      const d = await stagePlugin(manifestUrl)
+      // invalida qualquer cache de código/erro/viewed de uma estagiada
+      // anterior com o mesmo nome — re-estagiar sobrescreve o arquivo em
+      // disco, então o código antigo em memória não pode continuar
+      // "contando" como visto.
+      const staleName = d.name
+      setCode(c => { const n = { ...c }; delete n[staleName]; return n })
+      setCodeError(e => { const n = { ...e }; delete n[staleName]; return n })
+      setViewed(v => { const n = { ...v }; delete n[staleName]; return n })
       await loadStaged()
       setTab('estagiados')
     } catch (e) {
@@ -1220,6 +1229,9 @@ function PluginMarketplaceModal({ onClose }: { onClose: () => void }) {
       return
     }
     setExpanded(name)
+    // só um fetch bem-sucedido conta como "já carregado" — um erro
+    // cacheado aqui nunca pode virar um "viewed=true" sem o operador
+    // ter visto código de verdade (ver toggleExpand no catch abaixo).
     if (code[name]) {
       setViewed(v => ({ ...v, [name]: true }))
       return
@@ -1228,8 +1240,13 @@ function PluginMarketplaceModal({ onClose }: { onClose: () => void }) {
       const d = await fetchStagedPluginCode(name)
       setCode(c => ({ ...c, [name]: d.code }))
       setViewed(v => ({ ...v, [name]: true }))
+      setCodeError(e => { const n = { ...e }; delete n[name]; return n })
     } catch {
-      setCode(c => ({ ...c, [name]: '# erro ao carregar código' }))
+      // erro vai pro mapa separado — NUNCA pro mapa `code` (que dobra
+      // como cache de "já carregado"). Se fosse pro mesmo mapa, fechar
+      // e reabrir depois de uma falha bateria no cache e marcaria
+      // viewed=true sem o operador ter visto código nenhum.
+      setCodeError(e => ({ ...e, [name]: '# erro ao carregar código' }))
     }
   }
 
@@ -1237,6 +1254,10 @@ function PluginMarketplaceModal({ onClose }: { onClose: () => void }) {
     setBusy(name)
     try {
       await approvePlugin(name)
+      // defesa em profundidade — se esse nome for reestagiado no futuro
+      // sob o mesmo nome, não deve herdar um "viewed" de uma aprovação
+      // anterior.
+      setViewed(v => { const n = { ...v }; delete n[name]; return n })
       await loadStaged()
     } catch (e) {
       setStagedError(e instanceof Error ? e.message : 'Erro ao aprovar plugin')
@@ -1356,7 +1377,7 @@ function PluginMarketplaceModal({ onClose }: { onClose: () => void }) {
                   </div>
                   {expanded === p.name && (
                     <div style={{ padding: '0 12px 12px' }}>
-                      <CodeBlock language="python">{code[p.name] ?? '# carregando...'}</CodeBlock>
+                      <CodeBlock language="python">{codeError[p.name] ?? code[p.name] ?? '# carregando...'}</CodeBlock>
                     </div>
                   )}
                 </div>
@@ -1374,6 +1395,7 @@ function PluginMarketplaceModal({ onClose }: { onClose: () => void }) {
 
 function PluginRegistriesTab() {
   const [registries, setRegistries] = useState<string[]>([])
+  const [fromConfig, setFromConfig] = useState<string[]>([])
   const [newUrl, setNewUrl] = useState('')
   const [error, setError] = useState('')
 
@@ -1381,6 +1403,7 @@ function PluginRegistriesTab() {
     try {
       const d = await fetchPluginRegistries()
       setRegistries(d.registries)
+      setFromConfig(d.from_config)
       setError('')
     } catch {
       setError('Erro ao carregar registries.')
@@ -1425,12 +1448,19 @@ function PluginRegistriesTab() {
         />
         <button onClick={add} style={{ padding: '8px 14px', fontSize: '12.5px', fontWeight: 600, borderRadius: '8px', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>Adicionar</button>
       </div>
-      {registries.map(url => (
-        <div key={url} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', border: '1px solid var(--border)', borderRadius: '8px', marginBottom: '6px' }}>
-          <span style={{ fontSize: '12px', color: 'var(--text-secondary)', wordBreak: 'break-all' }}>{url}</span>
-          <button onClick={() => remove(url)} style={{ color: 'var(--text-muted)', background: 'none', cursor: 'pointer', flexShrink: 0, marginLeft: '8px' }}><Trash2 size={13} /></button>
-        </div>
-      ))}
+      {registries.map(url => {
+        const isConfig = fromConfig.includes(url)
+        return (
+          <div key={url} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', border: '1px solid var(--border)', borderRadius: '8px', marginBottom: '6px' }}>
+            <span style={{ fontSize: '12px', color: 'var(--text-secondary)', wordBreak: 'break-all' }}>{url}</span>
+            {isConfig ? (
+              <span style={{ fontSize: '10.5px', color: 'var(--text-muted)', flexShrink: 0, marginLeft: '8px', whiteSpace: 'nowrap' }}>vem de config.py</span>
+            ) : (
+              <button onClick={() => remove(url)} style={{ color: 'var(--text-muted)', background: 'none', cursor: 'pointer', flexShrink: 0, marginLeft: '8px' }}><Trash2 size={13} /></button>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

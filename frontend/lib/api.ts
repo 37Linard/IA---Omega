@@ -154,7 +154,7 @@ export interface TrustedAuthor {
   pubkey: string
 }
 
-export async function fetchPluginRegistries(): Promise<{ registries: string[] }> {
+export async function fetchPluginRegistries(): Promise<{ registries: string[]; from_config: string[] }> {
   return req('/plugins/registries')
 }
 

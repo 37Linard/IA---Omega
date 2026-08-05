@@ -580,11 +580,12 @@ async def post_specialist_model(body: dict, _rl=Depends(_check_rate_limit)):
 @app.get("/plugins/registries")
 async def list_plugin_registries():
     import plugin_manager as pm
-    return {"registries": pm.list_registry_urls()}
+    from config import PLUGIN_REGISTRY_URLS
+    return {"registries": pm.list_registry_urls(), "from_config": list(PLUGIN_REGISTRY_URLS)}
 
 
 @app.get("/plugins/search")
-async def search_plugins(q: str = ""):
+async def search_plugins(q: str = "", _rl=Depends(_check_rate_limit)):
     import plugin_manager as pm
     try:
         results = await asyncio.get_running_loop().run_in_executor(
@@ -627,6 +628,8 @@ async def add_plugin_registry(body: dict, _rl=Depends(_check_rate_limit)):
     url = body.get("url", "").strip()
     if not url:
         raise HTTPException(status_code=400, detail="url obrigatório")
+    if not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Registry precisa ser uma URL http:// ou https:// — caminho de arquivo local não é aceito por essa rota (use PLUGIN_REGISTRY_URLS em config.py pra registries locais de confiança).")
     pm.add_registry_url(url)
     return {"registries": pm.list_registry_urls()}
 
@@ -644,6 +647,8 @@ async def stage_plugin(
     _rl=Depends(_check_rate_limit),
     credentials: HTTPBasicCredentials = Depends(check_auth),
 ):
+    if not AUTH_PASSWORD:
+        raise HTTPException(status_code=403, detail="Defina AUTH_PASSWORD em config.py antes de instalar/aprovar/confiar plugins pela API (use o CLI de plugin_manager.py enquanto isso).")
     import plugin_manager as pm
     manifest_url = body.get("manifest_url", "").strip()
     if not manifest_url:
@@ -663,6 +668,8 @@ async def approve_plugin(
     _rl=Depends(_check_rate_limit),
     credentials: HTTPBasicCredentials = Depends(check_auth),
 ):
+    if not AUTH_PASSWORD:
+        raise HTTPException(status_code=403, detail="Defina AUTH_PASSWORD em config.py antes de instalar/aprovar/confiar plugins pela API (use o CLI de plugin_manager.py enquanto isso).")
     import plugin_manager as pm
     name = body.get("name", "").strip()
     if not name:
@@ -680,6 +687,8 @@ async def trust_plugin_author(
     _rl=Depends(_check_rate_limit),
     credentials: HTTPBasicCredentials = Depends(check_auth),
 ):
+    if not AUTH_PASSWORD:
+        raise HTTPException(status_code=403, detail="Defina AUTH_PASSWORD em config.py antes de instalar/aprovar/confiar plugins pela API (use o CLI de plugin_manager.py enquanto isso).")
     import plugin_manager as pm
     author_id  = body.get("author_id", "").strip()
     pubkey_hex = body.get("pubkey", "").strip()
@@ -698,6 +707,8 @@ async def untrust_plugin_author(
     _rl=Depends(_check_rate_limit),
     credentials: HTTPBasicCredentials = Depends(check_auth),
 ):
+    if not AUTH_PASSWORD:
+        raise HTTPException(status_code=403, detail="Defina AUTH_PASSWORD em config.py antes de instalar/aprovar/confiar plugins pela API (use o CLI de plugin_manager.py enquanto isso).")
     import plugin_manager as pm
     pm.untrust_author(author_id)
     return {"authors": pm.list_trusted_authors()}
