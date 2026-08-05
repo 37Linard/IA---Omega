@@ -1381,6 +1381,7 @@ function PluginRegistriesTab() {
     try {
       const d = await fetchPluginRegistries()
       setRegistries(d.registries)
+      setError('')
     } catch {
       setError('Erro ao carregar registries.')
     }
@@ -1400,8 +1401,12 @@ function PluginRegistriesTab() {
   }
 
   const remove = async (url: string) => {
-    const d = await removePluginRegistry(url)
-    setRegistries(d.registries)
+    try {
+      const d = await removePluginRegistry(url)
+      setRegistries(d.registries)
+    } catch {
+      setError('Erro ao remover registry.')
+    }
   }
 
   return (
@@ -1461,8 +1466,12 @@ function PluginTrustedAuthorsTab() {
   }
 
   const remove = async (id: string) => {
-    const d = await untrustPluginAuthor(id)
-    setAuthors(d.authors)
+    try {
+      const d = await untrustPluginAuthor(id)
+      setAuthors(d.authors)
+    } catch {
+      setError('Erro ao remover autor confiável.')
+    }
   }
 
   return (
