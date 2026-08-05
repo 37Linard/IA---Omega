@@ -30,23 +30,46 @@ código antes — a UI não pode virar um botão "instalar" de 1 clique sem revi
 
 ### Backend (`api.py`)
 
-Novos endpoints, todos atrás do mesmo `AUTH_PASSWORD`/JWT que já protege o
-resto da API (nada novo em auth):
+**Decisão de segurança (revisada em brainstorm):** `plugin_manager.py` hoje
+documenta que instalação é "SEMPRE uma ação manual do operador... nunca algo
+que o agente decide sozinho em runtime" e que por isso `stage`/`approve`/
+`trust_author` nunca ficam alcançáveis por rede — só CLI. Expor isso via API
+muda esse invariante (ainda mais com Tailscale ligado desde v1.5). Decisão:
+expor mesmo assim, mas travar os 3 endpoints de escrita atrás de
+`Depends(check_auth)` — mesma senha (`AUTH_PASSWORD`) que já protege
+`/export/data`. O agente continua sem acesso (rota HTTP não é tool
+carregada por `tool_loader.py`, nem nunca foi) — o que muda é só "alcançável
+sem estar no terminal da máquina", não "alcançável pelo agente/prompt
+injection". Resíduo de risco: quem tem a senha remota já tem acesso amplo
+à API mesmo (audit log, export de dados, terminal tool etc.), então isso
+não abre uma categoria nova de exposição, só estende uma já aceita.
+`plugin_manager.py` (docstring no topo) precisa de uma linha atualizada
+documentando que a API agora existe como segunda via, com a mesma trava de
+senha.
+
+Endpoints novos:
 
 - `GET /plugins/registries` — lista `PLUGIN_REGISTRY_URLS` (config) + as
-  adicionadas em runtime.
+  adicionadas em runtime. Leitura, sem auth extra (mesmo padrão de
+  `/specialist-models` GET).
 - `POST /plugins/registries {url}` / `DELETE /plugins/registries/{url}` —
   override em memória (`_runtime_registries: list[str]`, mesmo padrão do
-  `_runtime_models`), não persiste.
-- `GET /plugins/search?q=...` — chama `search_registries(q)`.
-- `POST /plugins/stage {manifest_url}` — chama `stage()`, retorna nome +
-  erro claro se hash/assinatura falhar (mensagem do `PluginError` já é boa).
-- `GET /plugins/staged` — `list_staged()`.
+  `_runtime_models`), não persiste. Rate-limit (`Depends(_check_rate_limit)`),
+  sem `check_auth` (só edita uma lista de URLs a consultar, não instala nada).
+- `GET /plugins/search?q=...` — chama `search_registries(q)`. Leitura.
+- `POST /plugins/stage {manifest_url}` — chama `stage()` — **`check_auth` +
+  rate limit**. Retorna nome + erro claro se hash/assinatura falhar
+  (mensagem do `PluginError` já é boa).
+- `GET /plugins/staged` — `list_staged()`. Leitura.
 - `GET /plugins/staged/{name}/code` — lê `plugins/{name}.staged.py` e
   devolve como texto (reusa `_safe_name` do `plugin_manager.py` pro path).
-- `POST /plugins/approve {name}` — `approve()`.
-- `GET /plugins/trusted-authors` / `POST /plugins/trust {author_id, pubkey}`
-  / `DELETE /plugins/trust/{author_id}`.
+  Leitura.
+- `POST /plugins/approve {name}` — `approve()` — **`check_auth` + rate
+  limit**.
+- `GET /plugins/trusted-authors` — leitura.
+- `POST /plugins/trust {author_id, pubkey}` / `DELETE
+  /plugins/trust/{author_id}` — **`check_auth` + rate limit** (decide em
+  quem confiar é decisão tão sensível quanto aprovar um plugin).
 
 Todos os erros de `PluginError` viram HTTP 400 com a mensagem original —
 já são mensagens pensadas pro humano ler (ex: "HASH NÃO BATE...").
