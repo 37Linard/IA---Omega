@@ -621,6 +621,88 @@ async def list_trusted_plugin_authors():
     return {"authors": pm.list_trusted_authors()}
 
 
+@app.post("/plugins/registries")
+async def add_plugin_registry(body: dict, _rl=Depends(_check_rate_limit)):
+    import plugin_manager as pm
+    url = body.get("url", "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url obrigatório")
+    pm.add_registry_url(url)
+    return {"registries": pm.list_registry_urls()}
+
+
+@app.delete("/plugins/registries")
+async def remove_plugin_registry(url: str, _rl=Depends(_check_rate_limit)):
+    import plugin_manager as pm
+    pm.remove_registry_url(url.strip())
+    return {"registries": pm.list_registry_urls()}
+
+
+@app.post("/plugins/stage")
+async def stage_plugin(
+    body: dict,
+    _rl=Depends(_check_rate_limit),
+    credentials: HTTPBasicCredentials = Depends(check_auth),
+):
+    import plugin_manager as pm
+    manifest_url = body.get("manifest_url", "").strip()
+    if not manifest_url:
+        raise HTTPException(status_code=400, detail="manifest_url obrigatório")
+    try:
+        name = await asyncio.get_running_loop().run_in_executor(
+            executor, pm.stage, manifest_url
+        )
+    except pm.PluginError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"name": name, "status": "staged"}
+
+
+@app.post("/plugins/approve")
+async def approve_plugin(
+    body: dict,
+    _rl=Depends(_check_rate_limit),
+    credentials: HTTPBasicCredentials = Depends(check_auth),
+):
+    import plugin_manager as pm
+    name = body.get("name", "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name obrigatório")
+    try:
+        pm.approve(name)
+    except pm.PluginError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"name": name, "status": "approved"}
+
+
+@app.post("/plugins/trust")
+async def trust_plugin_author(
+    body: dict,
+    _rl=Depends(_check_rate_limit),
+    credentials: HTTPBasicCredentials = Depends(check_auth),
+):
+    import plugin_manager as pm
+    author_id  = body.get("author_id", "").strip()
+    pubkey_hex = body.get("pubkey", "").strip()
+    if not author_id or not pubkey_hex:
+        raise HTTPException(status_code=400, detail="author_id e pubkey obrigatórios")
+    try:
+        pm.trust_author(author_id, pubkey_hex)
+    except pm.PluginError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"authors": pm.list_trusted_authors()}
+
+
+@app.delete("/plugins/trust/{author_id}")
+async def untrust_plugin_author(
+    author_id: str,
+    _rl=Depends(_check_rate_limit),
+    credentials: HTTPBasicCredentials = Depends(check_auth),
+):
+    import plugin_manager as pm
+    pm.untrust_author(author_id)
+    return {"authors": pm.list_trusted_authors()}
+
+
 @app.get("/kg/stats")
 async def kg_stats():
     from memory import Memory

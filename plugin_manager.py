@@ -42,6 +42,14 @@ MODELO DE SEGURANÇA (leia antes de habilitar):
      tem o mesmo teto de dano que código Python arbitrário rodando via
      `run_python`, não mais que isso.
 
+  5. Desde a v1.6, `stage`/`approve`/`trust_author`/`untrust_author` também
+     ficam expostos via API HTTP (`api.py`, rotas `/plugins/...`) — travados
+     atrás da mesma senha (`AUTH_PASSWORD`) que protege `/export/data`. Isso
+     não reabre o vetor de prompt injection do ponto 1: essas rotas nunca
+     foram (e continuam não sendo) carregadas por `tool_loader.py`, o agente
+     não tem — e nunca teve — como chamá-las. O que muda é só "alcançável
+     também por quem tem a senha remota", não "alcançável pelo agente".
+
 Uso (manual, no terminal — nunca chamado pelo agente):
 
     python plugin_manager.py stage <manifest_url>
