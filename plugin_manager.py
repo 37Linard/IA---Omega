@@ -253,8 +253,7 @@ def search_registries(query: str, registry_urls: list[str] | None = None) -> lis
     fora do ar ou malformado é pulado com aviso, não derruba a busca inteira
     nos outros registries configurados."""
     if registry_urls is None:
-        from config import PLUGIN_REGISTRY_URLS
-        registry_urls = PLUGIN_REGISTRY_URLS
+        registry_urls = list_registry_urls()
 
     query_l = query.lower().strip()
     results = []
@@ -273,6 +272,36 @@ def search_registries(query: str, registry_urls: list[str] | None = None) -> lis
             if not query_l or query_l in haystack:
                 results.append({**entry, "_registry": url})
     return results
+
+
+# ---------------------------------------------------------------------------
+# Registries em runtime — adicionadas via API/UI, sobrepõem config.py sem
+# reiniciar (mesmo padrão de orchestrator._runtime_models). Não persistem em
+# disco de propósito: virar permanente é decisão de editar config.py, igual
+# já documentado no topo deste arquivo.
+# ---------------------------------------------------------------------------
+_runtime_registry_urls: list[str] = []
+
+
+def list_registry_urls() -> list[str]:
+    from config import PLUGIN_REGISTRY_URLS
+    merged = list(PLUGIN_REGISTRY_URLS)
+    for url in _runtime_registry_urls:
+        if url not in merged:
+            merged.append(url)
+    return merged
+
+
+def add_registry_url(url: str) -> None:
+    if url not in list_registry_urls():
+        _runtime_registry_urls.append(url)
+        log.info("Registry adicionada em runtime: %s", url)
+
+
+def remove_registry_url(url: str) -> None:
+    if url in _runtime_registry_urls:
+        _runtime_registry_urls.remove(url)
+        log.info("Registry removida (runtime): %s", url)
 
 
 def fetch_manifest(manifest_url: str) -> dict:
