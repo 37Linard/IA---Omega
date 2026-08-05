@@ -135,6 +135,69 @@ export async function setSpecialistModel(specialist: string, model: string): Pro
   })
 }
 
+export interface PluginSearchResult {
+  name: string
+  description: string
+  manifest_url: string
+  author_id?: string
+  tags?: string[]
+  _registry: string
+}
+
+export interface StagedPlugin {
+  name: string
+  status: 'staged' | 'approved'
+}
+
+export interface TrustedAuthor {
+  author_id: string
+  pubkey: string
+}
+
+export async function fetchPluginRegistries(): Promise<{ registries: string[] }> {
+  return req('/plugins/registries')
+}
+
+export async function addPluginRegistry(url: string): Promise<{ registries: string[] }> {
+  return req('/plugins/registries', { method: 'POST', body: JSON.stringify({ url }) })
+}
+
+export async function removePluginRegistry(url: string): Promise<{ registries: string[] }> {
+  return req(`/plugins/registries?url=${encodeURIComponent(url)}`, { method: 'DELETE' })
+}
+
+export async function searchPlugins(q: string): Promise<{ results: PluginSearchResult[] }> {
+  return req(`/plugins/search?q=${encodeURIComponent(q)}`)
+}
+
+export async function stagePlugin(manifestUrl: string): Promise<{ name: string; status: string }> {
+  return req('/plugins/stage', { method: 'POST', body: JSON.stringify({ manifest_url: manifestUrl }) })
+}
+
+export async function fetchStagedPlugins(): Promise<{ plugins: StagedPlugin[] }> {
+  return req('/plugins/staged')
+}
+
+export async function fetchStagedPluginCode(name: string): Promise<{ name: string; code: string }> {
+  return req(`/plugins/staged/${encodeURIComponent(name)}/code`)
+}
+
+export async function approvePlugin(name: string): Promise<{ name: string; status: string }> {
+  return req('/plugins/approve', { method: 'POST', body: JSON.stringify({ name }) })
+}
+
+export async function fetchTrustedAuthors(): Promise<{ authors: TrustedAuthor[] }> {
+  return req('/plugins/trusted-authors')
+}
+
+export async function trustPluginAuthor(authorId: string, pubkey: string): Promise<{ authors: TrustedAuthor[] }> {
+  return req('/plugins/trust', { method: 'POST', body: JSON.stringify({ author_id: authorId, pubkey }) })
+}
+
+export async function untrustPluginAuthor(authorId: string): Promise<{ authors: TrustedAuthor[] }> {
+  return req(`/plugins/trust/${encodeURIComponent(authorId)}`, { method: 'DELETE' })
+}
+
 export async function fetchTemplates(): Promise<{ templates: import('./templates').Template[] }> {
   return req('/templates')
 }
