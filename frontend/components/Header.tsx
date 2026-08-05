@@ -1,12 +1,13 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Menu, Sun, Moon, User, Heart, Cpu, Database, Trash2, FolderOpen, RefreshCw, CheckCircle, XCircle, Loader2, Layers, GitGraph, LayoutGrid, Workflow, Download, ScrollText, MoreHorizontal } from 'lucide-react'
+import { Menu, Sun, Moon, User, Heart, Cpu, Database, Trash2, FolderOpen, RefreshCw, CheckCircle, XCircle, Loader2, Layers, GitGraph, LayoutGrid, Workflow, Download, ScrollText, MoreHorizontal, Puzzle } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
-import { fetchModels, setModel, fetchProfile, saveProfile, fetchRagDocs, ragIndexFolder, ragDeleteDoc, uploadFile, fetchMetrics, fetchSandboxStatus, fetchSpecialistModels, setSpecialistModel, exportConversation, fetchHealth, fetchAudit, fetchTraceRecent } from '@/lib/api'
-import type { AuditEntry, TraceSpan } from '@/lib/api'
+import { fetchModels, setModel, fetchProfile, saveProfile, fetchRagDocs, ragIndexFolder, ragDeleteDoc, uploadFile, fetchMetrics, fetchSandboxStatus, fetchSpecialistModels, setSpecialistModel, exportConversation, fetchHealth, fetchAudit, fetchTraceRecent, searchPlugins, stagePlugin, fetchStagedPlugins, fetchStagedPluginCode, approvePlugin } from '@/lib/api'
+import type { AuditEntry, TraceSpan, PluginSearchResult, StagedPlugin } from '@/lib/api'
 import { ThoughtTree } from './ThoughtTree'
 import { WorkflowDAG } from './WorkflowDAG'
+import { CodeBlock } from './CodeBlock'
 import type { UserProfile } from '@/lib/types'
 import { useRouter } from 'next/navigation'
 
@@ -26,6 +27,7 @@ export function Header({ onToggleSidebar }: Props) {
   const [modelsOpen, setModelsOpen] = useState(false)
   const [nocOpen,    setNocOpen]    = useState(false)
   const [workflowOpen, setWorkflowOpen] = useState(false)
+  const [pluginsOpen, setPluginsOpen] = useState(false)
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [exportState, setExportState] = useState<'idle' | 'saving' | 'done' | 'error'>('idle')
 
@@ -182,6 +184,10 @@ export function Header({ onToggleSidebar }: Props) {
             <HeaderBtn onClick={() => setAuditOpen(true)} title="Audit log / Tracing">
               <ScrollText size={15} />
             </HeaderBtn>
+
+            <HeaderBtn onClick={() => setPluginsOpen(true)} title="Plugin Marketplace">
+              <Puzzle size={15} />
+            </HeaderBtn>
           </div>
 
           {/* Botão "mais" — só abaixo de sm, abre menu com as 8 ações acima */}
@@ -201,6 +207,7 @@ export function Header({ onToggleSidebar }: Props) {
                   { icon: <Database size={15} />, label: 'RAG — Documentos', onClick: () => setRagOpen(true) },
                   { icon: <User size={15} />, label: 'Perfil', onClick: () => setProfileOpen(true) },
                   { icon: <ScrollText size={15} />, label: 'Audit log / Tracing', onClick: () => setAuditOpen(true) },
+                  { icon: <Puzzle size={15} />, label: 'Plugin Marketplace', onClick: () => setPluginsOpen(true) },
                 ]}
               />
             )}
@@ -230,6 +237,7 @@ export function Header({ onToggleSidebar }: Props) {
       )}
       {modelsOpen && <SpecialistModelsModal models={models} onClose={() => setModelsOpen(false)} />}
       {auditOpen && <AuditLogModal onClose={() => setAuditOpen(false)} />}
+      {pluginsOpen && <PluginMarketplaceModal onClose={() => setPluginsOpen(false)} />}
       {ragOpen && <RagModal onClose={() => setRagOpen(false)} />}
       {profileOpen && profile && (
         <ProfileModal profile={profile} onSave={async d => { const u = await saveProfile(d); setProfile(u); setProfileOpen(false) }} onClose={() => setProfileOpen(false)} />
@@ -1149,6 +1157,225 @@ function AuditLogModal({ onClose }: { onClose: () => void }) {
       </div>
     </div>
   )
+}
+
+function PluginMarketplaceModal({ onClose }: { onClose: () => void }) {
+  const [tab, setTab] = useState<'buscar' | 'estagiados' | 'registries' | 'autores'>('buscar')
+
+  // -- Buscar --
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<PluginSearchResult[]>([])
+  const [searching, setSearching] = useState(false)
+  const [searchError, setSearchError] = useState('')
+
+  // -- Estagiados --
+  const [staged, setStaged] = useState<StagedPlugin[]>([])
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [code, setCode] = useState<Record<string, string>>({})
+  const [viewed, setViewed] = useState<Record<string, boolean>>({})
+  const [busy, setBusy] = useState<string | null>(null)
+  const [stagedError, setStagedError] = useState('')
+
+  const loadStaged = useCallback(async () => {
+    try {
+      const d = await fetchStagedPlugins()
+      setStaged(d.plugins)
+      setStagedError('')
+    } catch {
+      setStagedError('Erro ao carregar plugins estagiados — backend disponível?')
+    }
+  }, [])
+
+  useEffect(() => { loadStaged() }, [loadStaged])
+
+  const doSearch = async () => {
+    setSearching(true)
+    setSearchError('')
+    try {
+      const d = await searchPlugins(query)
+      setResults(d.results)
+    } catch {
+      setSearchError('Erro na busca — cheque se há registries configuradas na aba Registries.')
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  const doStage = async (manifestUrl: string) => {
+    setBusy(manifestUrl)
+    try {
+      await stagePlugin(manifestUrl)
+      await loadStaged()
+      setTab('estagiados')
+    } catch (e) {
+      setSearchError(e instanceof Error ? e.message : 'Erro ao estagiar plugin')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const toggleExpand = async (name: string) => {
+    if (expanded === name) {
+      setExpanded(null)
+      return
+    }
+    setExpanded(name)
+    setViewed(v => ({ ...v, [name]: true }))
+    if (!code[name]) {
+      try {
+        const d = await fetchStagedPluginCode(name)
+        setCode(c => ({ ...c, [name]: d.code }))
+      } catch {
+        setCode(c => ({ ...c, [name]: '# erro ao carregar código' }))
+      }
+    }
+  }
+
+  const doApprove = async (name: string) => {
+    setBusy(name)
+    try {
+      await approvePlugin(name)
+      await loadStaged()
+    } catch (e) {
+      setStagedError(e instanceof Error ? e.message : 'Erro ao aprovar plugin')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const tabBtnStyle = (active: boolean): React.CSSProperties => ({
+    padding: '6px 12px',
+    fontSize: '12.5px',
+    fontWeight: 600,
+    color: active ? 'var(--text-primary)' : 'var(--text-muted)',
+    borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
+    background: 'none',
+    cursor: 'pointer',
+  })
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div
+        style={{
+          background: 'var(--surface)',
+          border: '1px solid var(--border-strong)',
+          borderRadius: 'var(--radius-lg)',
+          width: '100%',
+          maxWidth: '760px',
+          maxHeight: '80vh',
+          overflow: 'hidden',
+          boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+        className="anim-fade-up"
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+          <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}>Plugin Marketplace</span>
+          <button onClick={onClose} style={{ color: 'var(--text-muted)', background: 'none', fontSize: '18px', lineHeight: 1, cursor: 'pointer' }}>×</button>
+        </div>
+
+        <div style={{ display: 'flex', gap: '4px', padding: '8px 20px 0', borderBottom: '1px solid var(--border)' }}>
+          <button style={tabBtnStyle(tab === 'buscar')} onClick={() => setTab('buscar')}>Buscar</button>
+          <button style={tabBtnStyle(tab === 'estagiados')} onClick={() => setTab('estagiados')}>Estagiados</button>
+          <button style={tabBtnStyle(tab === 'registries')} onClick={() => setTab('registries')}>Registries</button>
+          <button style={tabBtnStyle(tab === 'autores')} onClick={() => setTab('autores')}>Autores confiáveis</button>
+        </div>
+
+        <div style={{ padding: '16px 20px', overflowY: 'auto', flex: 1 }}>
+          {tab === 'buscar' && (
+            <div>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                <input
+                  value={query}
+                  onChange={e => setQuery(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') doSearch() }}
+                  placeholder="Buscar plugin por nome/descrição/tag..."
+                  style={{ flex: 1, padding: '8px 10px', fontSize: '13px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text-primary)' }}
+                />
+                <button onClick={doSearch} disabled={searching} style={{ padding: '8px 14px', fontSize: '12.5px', fontWeight: 600, borderRadius: '8px', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>
+                  {searching ? 'Buscando...' : 'Buscar'}
+                </button>
+              </div>
+              {searchError && <div style={{ color: '#f87171', fontSize: '12px', marginBottom: '10px' }}>{searchError}</div>}
+              {results.map(r => (
+                <div key={r.manifest_url} style={{ padding: '10px 12px', border: '1px solid var(--border)', borderRadius: '8px', marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{r.name}</span>
+                    <button
+                      onClick={() => doStage(r.manifest_url)}
+                      disabled={busy === r.manifest_url}
+                      style={{ padding: '4px 10px', fontSize: '11.5px', fontWeight: 600, borderRadius: '6px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', cursor: 'pointer' }}
+                    >
+                      {busy === r.manifest_url ? 'Estagiando...' : 'Estagiar'}
+                    </button>
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>{r.description}</div>
+                  {r.author_id && <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>autor: {r.author_id}</div>}
+                </div>
+              ))}
+              {!searching && results.length === 0 && (
+                <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Nenhum resultado. Confira a aba Registries se nada aparecer.</div>
+              )}
+            </div>
+          )}
+
+          {tab === 'estagiados' && (
+            <div>
+              {stagedError && <div style={{ color: '#f87171', fontSize: '12px', marginBottom: '10px' }}>{stagedError}</div>}
+              {staged.length === 0 && <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Nenhum plugin estagiado ainda.</div>}
+              {staged.map(p => (
+                <div key={p.name} style={{ border: '1px solid var(--border)', borderRadius: '8px', marginBottom: '8px', overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px' }}>
+                    <div>
+                      <span style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{p.name}</span>
+                      <span style={{ fontSize: '11px', color: p.status === 'approved' ? '#4ade80' : 'var(--text-muted)', marginLeft: '8px' }}>{p.status}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      {p.status === 'staged' && (
+                        <button onClick={() => toggleExpand(p.name)} style={{ padding: '4px 10px', fontSize: '11.5px', fontWeight: 600, borderRadius: '6px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)', cursor: 'pointer' }}>
+                          {expanded === p.name ? 'Ocultar código' : 'Ver código'}
+                        </button>
+                      )}
+                      {p.status === 'staged' && (
+                        <button
+                          onClick={() => doApprove(p.name)}
+                          disabled={!viewed[p.name] || busy === p.name}
+                          title={!viewed[p.name] ? 'Leia o código antes de aprovar' : undefined}
+                          style={{ padding: '4px 10px', fontSize: '11.5px', fontWeight: 600, borderRadius: '6px', background: viewed[p.name] ? 'var(--accent)' : 'var(--bg-secondary)', color: viewed[p.name] ? '#fff' : 'var(--text-muted)', cursor: viewed[p.name] ? 'pointer' : 'not-allowed' }}
+                        >
+                          {busy === p.name ? 'Aprovando...' : 'Aprovar'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {expanded === p.name && (
+                    <div style={{ padding: '0 12px 12px' }}>
+                      <CodeBlock language="python">{code[p.name] ?? '# carregando...'}</CodeBlock>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {tab === 'registries' && <PluginRegistriesTab />}
+          {tab === 'autores' && <PluginTrustedAuthorsTab />}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PluginRegistriesTab() {
+  return <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Carregando...</div>
+}
+
+function PluginTrustedAuthorsTab() {
+  return <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Carregando...</div>
 }
 
 function SpecialistModelsModal({ models, onClose }: { models: string[]; onClose: () => void }) {
