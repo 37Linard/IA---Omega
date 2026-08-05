@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 import uuid
 from collections import defaultdict, deque
@@ -574,6 +575,50 @@ async def post_specialist_model(body: dict, _rl=Depends(_check_rate_limit)):
     except SpecialistModelsDisabledError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"specialist": specialist, "model": model}
+
+
+@app.get("/plugins/registries")
+async def list_plugin_registries():
+    import plugin_manager as pm
+    return {"registries": pm.list_registry_urls()}
+
+
+@app.get("/plugins/search")
+async def search_plugins(q: str = ""):
+    import plugin_manager as pm
+    try:
+        results = await asyncio.get_running_loop().run_in_executor(
+            executor, pm.search_registries, q
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"results": results}
+
+
+@app.get("/plugins/staged")
+async def list_staged_plugins():
+    import plugin_manager as pm
+    return {"plugins": pm.list_staged()}
+
+
+@app.get("/plugins/staged/{name}/code")
+async def get_staged_plugin_code(name: str):
+    import plugin_manager as pm
+    try:
+        safe_name = pm._safe_name(name)
+    except pm.PluginError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    staged_path = os.path.join(pm.PLUGINS_DIR, f"{safe_name}.staged.py")
+    if not os.path.isfile(staged_path):
+        raise HTTPException(status_code=404, detail=f"'{name}' não está estagiado")
+    with open(staged_path, encoding="utf-8") as f:
+        return {"name": safe_name, "code": f.read()}
+
+
+@app.get("/plugins/trusted-authors")
+async def list_trusted_plugin_authors():
+    import plugin_manager as pm
+    return {"authors": pm.list_trusted_authors()}
 
 
 @app.get("/kg/stats")
