@@ -3,8 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Menu, Sun, Moon, User, Heart, Cpu, Database, Trash2, FolderOpen, RefreshCw, CheckCircle, XCircle, Loader2, Layers, GitGraph, LayoutGrid, Workflow, Download, ScrollText, MoreHorizontal, Puzzle } from 'lucide-react'
 import { useChatStore } from '@/store/chatStore'
-import { fetchModels, setModel, fetchProfile, saveProfile, fetchRagDocs, ragIndexFolder, ragDeleteDoc, uploadFile, fetchMetrics, fetchSandboxStatus, fetchSpecialistModels, setSpecialistModel, exportConversation, fetchHealth, fetchAudit, fetchTraceRecent, searchPlugins, stagePlugin, fetchStagedPlugins, fetchStagedPluginCode, approvePlugin } from '@/lib/api'
-import type { AuditEntry, TraceSpan, PluginSearchResult, StagedPlugin } from '@/lib/api'
+import { fetchModels, setModel, fetchProfile, saveProfile, fetchRagDocs, ragIndexFolder, ragDeleteDoc, uploadFile, fetchMetrics, fetchSandboxStatus, fetchSpecialistModels, setSpecialistModel, exportConversation, fetchHealth, fetchAudit, fetchTraceRecent, searchPlugins, stagePlugin, fetchStagedPlugins, fetchStagedPluginCode, approvePlugin, fetchPluginRegistries, addPluginRegistry, removePluginRegistry, fetchTrustedAuthors, trustPluginAuthor, untrustPluginAuthor } from '@/lib/api'
+import type { AuditEntry, TraceSpan, PluginSearchResult, StagedPlugin, TrustedAuthor } from '@/lib/api'
 import { ThoughtTree } from './ThoughtTree'
 import { WorkflowDAG } from './WorkflowDAG'
 import { CodeBlock } from './CodeBlock'
@@ -190,7 +190,7 @@ export function Header({ onToggleSidebar }: Props) {
             </HeaderBtn>
           </div>
 
-          {/* Botão "mais" — só abaixo de sm, abre menu com as 8 ações acima */}
+          {/* Botão "mais" — só abaixo de sm, abre menu com as 9 ações acima */}
           <div className="sm:hidden" style={{ position: 'relative' }}>
             <HeaderBtn onClick={() => setMoreOpen(o => !o)} title="Mais opções">
               <MoreHorizontal size={15} />
@@ -1373,11 +1373,122 @@ function PluginMarketplaceModal({ onClose }: { onClose: () => void }) {
 }
 
 function PluginRegistriesTab() {
-  return <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Carregando...</div>
+  const [registries, setRegistries] = useState<string[]>([])
+  const [newUrl, setNewUrl] = useState('')
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      const d = await fetchPluginRegistries()
+      setRegistries(d.registries)
+    } catch {
+      setError('Erro ao carregar registries.')
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const add = async () => {
+    if (!newUrl.trim()) return
+    try {
+      const d = await addPluginRegistry(newUrl.trim())
+      setRegistries(d.registries)
+      setNewUrl('')
+    } catch {
+      setError('Erro ao adicionar registry.')
+    }
+  }
+
+  const remove = async (url: string) => {
+    const d = await removePluginRegistry(url)
+    setRegistries(d.registries)
+  }
+
+  return (
+    <div>
+      <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', marginBottom: '10px' }}>
+        Registries adicionadas aqui ficam só em memória — não sobrevivem a um restart do backend. Pra deixar permanente, edite <code>PLUGIN_REGISTRY_URLS</code> em <code>config.py</code>.
+      </div>
+      {error && <div style={{ color: '#f87171', fontSize: '12px', marginBottom: '10px' }}>{error}</div>}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+        <input
+          value={newUrl}
+          onChange={e => setNewUrl(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') add() }}
+          placeholder="https://... ou caminho local do registry.json"
+          style={{ flex: 1, padding: '8px 10px', fontSize: '13px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text-primary)' }}
+        />
+        <button onClick={add} style={{ padding: '8px 14px', fontSize: '12.5px', fontWeight: 600, borderRadius: '8px', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>Adicionar</button>
+      </div>
+      {registries.map(url => (
+        <div key={url} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', border: '1px solid var(--border)', borderRadius: '8px', marginBottom: '6px' }}>
+          <span style={{ fontSize: '12px', color: 'var(--text-secondary)', wordBreak: 'break-all' }}>{url}</span>
+          <button onClick={() => remove(url)} style={{ color: 'var(--text-muted)', background: 'none', cursor: 'pointer', flexShrink: 0, marginLeft: '8px' }}><Trash2 size={13} /></button>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 function PluginTrustedAuthorsTab() {
-  return <div style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>Carregando...</div>
+  const [authors, setAuthors] = useState<TrustedAuthor[]>([])
+  const [authorId, setAuthorId] = useState('')
+  const [pubkey, setPubkey] = useState('')
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    try {
+      const d = await fetchTrustedAuthors()
+      setAuthors(d.authors)
+    } catch {
+      setError('Erro ao carregar autores confiáveis.')
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const add = async () => {
+    if (!authorId.trim() || !pubkey.trim()) return
+    setError('')
+    try {
+      const d = await trustPluginAuthor(authorId.trim(), pubkey.trim())
+      setAuthors(d.authors)
+      setAuthorId('')
+      setPubkey('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erro ao confiar no autor — chave pública inválida?')
+    }
+  }
+
+  const remove = async (id: string) => {
+    const d = await untrustPluginAuthor(id)
+    setAuthors(d.authors)
+  }
+
+  return (
+    <div>
+      <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', marginBottom: '10px' }}>
+        A chave pública precisa vir de um canal que você confia (não do próprio manifest do plugin) — é o que impede um manifest malicioso de se autodeclarar confiável.
+      </div>
+      {error && <div style={{ color: '#f87171', fontSize: '12px', marginBottom: '10px' }}>{error}</div>}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
+        <input value={authorId} onChange={e => setAuthorId(e.target.value)} placeholder="author_id"
+          style={{ flex: '1 1 120px', padding: '8px 10px', fontSize: '13px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text-primary)' }} />
+        <input value={pubkey} onChange={e => setPubkey(e.target.value)} placeholder="chave pública Ed25519 (hex)"
+          style={{ flex: '2 1 220px', padding: '8px 10px', fontSize: '13px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--text-primary)' }} />
+        <button onClick={add} style={{ padding: '8px 14px', fontSize: '12.5px', fontWeight: 600, borderRadius: '8px', background: 'var(--accent)', color: '#fff', cursor: 'pointer' }}>Confiar</button>
+      </div>
+      {authors.map(a => (
+        <div key={a.author_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', border: '1px solid var(--border)', borderRadius: '8px', marginBottom: '6px' }}>
+          <div>
+            <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{a.author_id}</div>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', wordBreak: 'break-all' }}>{a.pubkey}</div>
+          </div>
+          <button onClick={() => remove(a.author_id)} style={{ color: 'var(--text-muted)', background: 'none', cursor: 'pointer', flexShrink: 0, marginLeft: '8px' }}><Trash2 size={13} /></button>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 function SpecialistModelsModal({ models, onClose }: { models: string[]; onClose: () => void }) {
